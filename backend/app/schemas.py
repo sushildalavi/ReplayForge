@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class EventCreate(BaseModel):
+    application_name: str
+    workflow_id: str
+    event_type: str
+    service_name: str
+    idempotency_key: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    max_attempts: int = 4
+
+
+class EventAttemptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    attempt_number: int
+    worker_name: str | None = None
+    status: str
+    error_message: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    started_at: datetime
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+
+
+class EventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    application_id: uuid.UUID
+    workflow_id: str
+    event_type: str
+    service_name: str
+    idempotency_key: str
+    status: str
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    attempt_count: int
+    max_attempts: int
+    next_retry_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    duplicate: bool = False
+    attempts: list[EventAttemptOut] = Field(default_factory=list)
+
+
+class WorkflowSummaryOut(BaseModel):
+    workflow_id: str
+    total_events: int
+    succeeded: int
+    failed: int
+    dead_lettered: int
+    in_flight: int
+    has_failures: bool
+    last_updated_at: datetime | None = None
+
+
+class WorkflowTimelineEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    event_type: str
+    service_name: str
+    status: str
+    attempt_count: int
+    max_attempts: int
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    attempts: list[EventAttemptOut] = Field(default_factory=list)
+
+
+class WorkflowTimelineOut(BaseModel):
+    workflow_id: str
+    events: list[WorkflowTimelineEventOut]
+
+
+class DeadLetterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    event_id: uuid.UUID
+    workflow_id: str
+    event_type: str
+    service_name: str
+    reason: str
+    last_error: str | None = None
+    created_at: datetime
+    replayed_at: datetime | None = None
+    replay_status: str | None = None
+
+
+class WorkerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    worker_name: str
+    status: str
+    last_heartbeat_at: datetime
+    current_event_id: uuid.UUID | None = None
+    is_stale: bool = False
+
+
+class MetricsOut(BaseModel):
+    total_events: int
+    succeeded: int
+    failed: int
+    dead_lettered: int
+    retrying: int
+    queued: int
+    processing: int
+    replay_requeued: int
+    replay_success_rate: float
+    active_workers: int
+    stale_workers: int
+    avg_attempt_duration_ms: float | None = None
+    p50_attempt_duration_ms: float | None = None
+    p95_attempt_duration_ms: float | None = None
+
+
+class IncidentSummaryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
+    id: uuid.UUID
+    workflow_id: str
+    summary_text: str
+    model_name: str | None = None
+    created_at: datetime
