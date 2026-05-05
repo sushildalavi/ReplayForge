@@ -38,6 +38,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version}
 
 
-from app.api import routes_events  # noqa: E402
+from app.api import routes_events, routes_workflows, routes_workers, routes_metrics, routes_deadletters, routes_incidents  # noqa: E402
 app.include_router(routes_events.router)
 app.include_router(routes_events.demo_router)
+app.include_router(routes_workflows.router)
+app.include_router(routes_workers.router)
+app.include_router(routes_metrics.router)
+app.include_router(routes_deadletters.router)
+app.include_router(routes_incidents.router)
