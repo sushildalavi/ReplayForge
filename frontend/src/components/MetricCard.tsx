@@ -1,105 +1,95 @@
 import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
-import { AnimatedNumber, Skeleton } from "./Animated";
+import { Skeleton, AnimatedNumber } from "./Animated";
 
-interface MetricCardProps {
+interface Props {
   title: string;
   value: number | string | null;
   sub?: string;
   icon?: LucideIcon;
-  trendLabel?: string;
-  trendDir?: "up" | "down" | "neutral";
-  accent?: "indigo" | "emerald" | "rose" | "orange" | "yellow" | "purple" | "gray";
-  animate?: boolean;
+  trend?: string;
+  trendDir?: "up" | "down" | "flat";
+  accent?: "indigo" | "emerald" | "rose" | "orange" | "amber" | "purple" | "sky";
+  sparkData?: number[];
 }
 
-const glowMap: Record<string, string> = {
-  indigo:  "card-glow-indigo",
-  emerald: "card-glow-emerald",
-  rose:    "card-glow-rose",
-  orange:  "card-glow-orange",
-  yellow:  "card-glow-yellow",
-  purple:  "card-glow-purple",
-  gray:    "",
-};
-const iconMap: Record<string, string> = {
-  indigo:  "bg-indigo-500/10 text-indigo-400",
-  emerald: "bg-emerald-500/10 text-emerald-400",
-  rose:    "bg-rose-500/10 text-rose-400",
-  orange:  "bg-orange-500/10 text-orange-400",
-  yellow:  "bg-yellow-500/10 text-yellow-400",
-  purple:  "bg-purple-500/10 text-purple-400",
-  gray:    "bg-slate-800 text-slate-400",
-};
-const borderMap: Record<string, string> = {
-  indigo:  "border-indigo-500/20",
-  emerald: "border-emerald-500/20",
-  rose:    "border-rose-500/20",
-  orange:  "border-orange-500/20",
-  yellow:  "border-yellow-500/20",
-  purple:  "border-purple-500/20",
-  gray:    "border-slate-800",
-};
-const trendMap = {
-  up:      "text-emerald-400",
-  down:    "text-rose-400",
-  neutral: "text-slate-500",
+const accentCfg: Record<string, { border: string; iconBg: string; iconText: string; glow: string; sparkStroke: string }> = {
+  indigo:  { border: "rgba(99,102,241,0.18)",  iconBg: "rgba(99,102,241,0.1)",  iconText: "#818cf8", glow: "rgba(99,102,241,0.08)",  sparkStroke: "#6366f1" },
+  emerald: { border: "rgba(16,185,129,0.18)",  iconBg: "rgba(16,185,129,0.1)",  iconText: "#34d399", glow: "rgba(16,185,129,0.08)",  sparkStroke: "#10b981" },
+  rose:    { border: "rgba(244,63,94,0.18)",   iconBg: "rgba(244,63,94,0.1)",   iconText: "#fb7185", glow: "rgba(244,63,94,0.08)",   sparkStroke: "#f43f5e" },
+  orange:  { border: "rgba(249,115,22,0.18)",  iconBg: "rgba(249,115,22,0.1)",  iconText: "#fb923c", glow: "rgba(249,115,22,0.08)",  sparkStroke: "#f97316" },
+  amber:   { border: "rgba(245,158,11,0.18)",  iconBg: "rgba(245,158,11,0.1)",  iconText: "#fbbf24", glow: "rgba(245,158,11,0.08)",  sparkStroke: "#f59e0b" },
+  purple:  { border: "rgba(168,85,247,0.18)",  iconBg: "rgba(168,85,247,0.1)",  iconText: "#c084fc", glow: "rgba(168,85,247,0.08)",  sparkStroke: "#a855f7" },
+  sky:     { border: "rgba(14,165,233,0.18)",  iconBg: "rgba(14,165,233,0.1)",  iconText: "#38bdf8", glow: "rgba(14,165,233,0.08)",  sparkStroke: "#0ea5e9" },
 };
 
-export function MetricCard({
-  title, value, sub, icon: Icon, trendLabel, trendDir = "neutral", accent = "gray", animate = true,
-}: MetricCardProps) {
+const trendCfg = {
+  up:   "text-emerald-400",
+  down: "text-rose-400",
+  flat: "text-slate-500",
+};
+
+function MiniSparkline({ data, stroke }: { data: number[]; stroke: string }) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const w = 64, h = 28;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - (v / max) * (h - 4) - 2;
+    return `${x},${y}`;
+  }).join(" ");
+  const fillPts = `0,${h} ${pts} ${w},${h}`;
+  return (
+    <svg width={w} height={h} className="overflow-visible">
+      <defs>
+        <linearGradient id={`sg-${stroke.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={stroke} stopOpacity={0.02} />
+        </linearGradient>
+      </defs>
+      <polygon points={fillPts} fill={`url(#sg-${stroke.replace("#","")})`} />
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function MetricCard({ title, value, sub, icon: Icon, trend, trendDir = "flat", accent = "indigo", sparkData }: Props) {
+  const cfg = accentCfg[accent];
   const isLoading = value === null;
-  const isNumeric = typeof value === "number";
 
   return (
     <motion.div
-      className={`card ${borderMap[accent]} ${glowMap[accent]} p-5 relative overflow-hidden cursor-default`}
-      whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      className="card relative overflow-hidden cursor-default"
+      style={{ borderColor: cfg.border, boxShadow: `0 0 24px ${cfg.glow}` }}
+      whileHover={{ y: -2, boxShadow: `0 8px 32px ${cfg.glow}, 0 0 0 1px ${cfg.border}` }}
+      transition={{ duration: 0.15 }}
     >
-      {/* subtle gradient overlay */}
-      {accent !== "gray" && (
-        <div className={`absolute inset-0 opacity-[0.03] pointer-events-none`}
-          style={{
-            background: `radial-gradient(ellipse at top right, ${
-              accent === "indigo" ? "#6366f1" :
-              accent === "emerald" ? "#10b981" :
-              accent === "rose" ? "#f43f5e" :
-              accent === "orange" ? "#f97316" :
-              accent === "yellow" ? "#eab308" :
-              "#a855f7"
-            } 0%, transparent 70%)`
-          }}
-        />
-      )}
+      {/* top gradient sheen */}
+      <div className="absolute inset-x-0 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${cfg.iconText}30, transparent)` }} />
 
-      <div className="relative flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2.5">{title}</p>
-
-          <div className="text-[28px] font-bold text-white leading-none tabular-nums mono">
-            {isLoading ? (
-              <Skeleton className="w-20 h-8" />
-            ) : animate && isNumeric ? (
-              <AnimatedNumber value={value as number} />
-            ) : (
-              value
-            )}
-          </div>
-
-          <div className="mt-2.5 flex items-center gap-2">
-            {trendLabel && (
-              <span className={`text-xs font-semibold ${trendMap[trendDir]}`}>{trendLabel}</span>
-            )}
-            {sub && <span className="text-xs text-slate-600">{sub}</span>}
-          </div>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <p className="text-[11px] font-semibold tracking-[0.06em] uppercase" style={{ color: "#475569" }}>{title}</p>
+          {Icon && (
+            <div className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center" style={{ background: cfg.iconBg }}>
+              <Icon size={14} style={{ color: cfg.iconText }} strokeWidth={2} />
+            </div>
+          )}
         </div>
 
-        {Icon && (
-          <div className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${iconMap[accent]}`}>
-            <Icon size={16} strokeWidth={2} />
+        <div className="flex items-end justify-between gap-2">
+          <div>
+            <div className="text-[26px] font-bold text-white leading-none mono tabular-nums">
+              {isLoading ? <Skeleton className="w-16 h-7" /> :
+               typeof value === "number" ? <AnimatedNumber value={value} /> : value}
+            </div>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              {trend && <span className={`text-[11px] font-semibold ${trendCfg[trendDir]}`}>{trend}</span>}
+              {sub && <span className="text-[11px]" style={{ color: "#334155" }}>{sub}</span>}
+            </div>
           </div>
-        )}
+          {sparkData && <MiniSparkline data={sparkData} stroke={cfg.sparkStroke} />}
+        </div>
       </div>
     </motion.div>
   );

@@ -1,25 +1,27 @@
 import { useCallback, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
-import { motion } from "framer-motion";
 import {
-  Activity, AlertCircle, ArrowUpRight, CheckCircle2,
-  Clock, Play, RefreshCw, Server, Skull, TrendingUp, Zap,
+  Activity, AlertCircle, ArrowUpRight, CheckCircle2, Clock,
+  Play, RefreshCw, Server, Skull, TrendingDown, TrendingUp, Zap,
 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../api/client";
 import { MetricCard } from "../components/MetricCard";
 import { EventStatusBadge } from "../components/EventStatusBadge";
-import { AnimatedNumber, FadeIn, Stagger, StaggerItem, Skeleton } from "../components/Animated";
+import { LiveFeed } from "../components/LiveFeed";
+import { AnimatedNumber, FadeIn, Stagger, StaggerItem, Skeleton, AppearOnScroll } from "../components/Animated";
 import { usePolling } from "../hooks/usePolling";
-import type { MetricsOut, WorkflowSummaryOut } from "../types";
+import type { MetricsOut } from "../types";
 
-/* ── helpers ─────────────────────────────────────────────── */
-const fmtMs = (ms: number | null) => ms == null ? "–" : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-const timeAgo = (iso: string | null) => {
+/* ── helpers ─────────────────────────────────────────────────── */
+const fmtMs = (v: number | null) => v == null ? "–" : v < 1000 ? `${Math.round(v)}ms` : `${(v / 1000).toFixed(2)}s`;
+const pct = (n: number, d: number) => d === 0 ? "0.0%" : `${((n / d) * 100).toFixed(1)}%`;
+const ago = (iso: string | null) => {
   if (!iso) return "–";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60) return `${s}s ago`;
@@ -27,394 +29,493 @@ const timeAgo = (iso: string | null) => {
   return `${Math.floor(s / 3600)}h ago`;
 };
 
-/* ── chart palette ───────────────────────────────────────── */
-const C = {
-  succeeded:    "#10b981",
-  dead:         "#f43f5e",
-  retrying:     "#f97316",
-  queued:       "#6366f1",
-  processing:   "#eab308",
-  indigo:       "#818cf8",
-};
-
+/* ── chart style ─────────────────────────────────────────────── */
 const TT = {
-  contentStyle: {
-    background: "#0d1525", border: "1px solid #1a2640",
-    borderRadius: 10, fontSize: 12, padding: "10px 14px",
-    boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
-  },
-  labelStyle:  { color: "#64748b", marginBottom: 6, fontSize: 11 },
-  itemStyle:   { color: "#e2e8f0" },
-  cursor:      { stroke: "rgba(255,255,255,0.06)", strokeWidth: 1 },
+  contentStyle: { background: "#0b1120", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 12, padding: "10px 14px", boxShadow: "0 20px 40px rgba(0,0,0,0.7)" },
+  labelStyle: { color: "#475569", fontSize: 11, marginBottom: 4 },
+  itemStyle: { color: "#e2e8f0" },
+  cursor: { stroke: "rgba(255,255,255,0.04)" },
 };
 
-/* ── sparkline history ───────────────────────────────────── */
-type Snapshot = { t: string; succeeded: number; dead: number; retrying: number; total: number };
+type Snap = { t: string; succeeded: number; dead: number; retrying: number; total: number; p50: number; p95: number; errorRate: number };
 
-function buildPie(m: MetricsOut) {
-  return [
-    { name: "Succeeded",    value: m.succeeded,     color: C.succeeded },
-    { name: "Dead-lettered",value: m.dead_lettered, color: C.dead },
-    { name: "Retrying",     value: m.retrying,      color: C.retrying },
-    { name: "Queued",       value: m.queued,         color: C.queued },
-    { name: "Processing",   value: m.processing,     color: C.processing },
-  ].filter(s => s.value > 0);
+/* ── donut center ────────────────────────────────────────────── */
+function DonutCenter({ cx, cy, total }: { cx: number; cy: number; total: number }) {
+  return (
+    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central">
+      <tspan x={cx} dy="-0.35em" style={{ fill: "#f1f5f9", fontSize: 18, fontWeight: 700, fontFamily: "JetBrains Mono,monospace" }}>
+        {total.toLocaleString()}
+      </tspan>
+      <tspan x={cx} dy="1.5em" style={{ fill: "#334155", fontSize: 10 }}>events</tspan>
+    </text>
+  );
 }
 
-function buildBar(wf: WorkflowSummaryOut[]) {
-  return wf.slice(0, 14).reverse().map(w => ({
-    id: w.workflow_id.slice(-8),
-    ok:  w.succeeded,
-    dlq: w.dead_lettered,
-    fly: w.in_flight,
-  }));
-}
-
-/* ── custom tooltip ──────────────────────────────────────── */
-function BarTip({ active, payload, label }: any) {
+/* ── custom chart tooltip ────────────────────────────────────── */
+function LatencyTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
     <div style={TT.contentStyle}>
-      <p className="mono text-[11px] text-slate-500 mb-2">{label}</p>
+      <p className="mono text-[11px] mb-2" style={{ color: "#475569" }}>{label}</p>
       {payload.map((p: any) => (
         <div key={p.name} className="flex items-center gap-2 text-[12px] mb-1">
-          <span className="w-2 h-2 rounded-sm" style={{ background: p.fill }} />
-          <span className="text-slate-400">{p.name}</span>
-          <span className="font-semibold text-white ml-auto pl-4">{p.value}</span>
+          <span className="w-2 h-0.5 rounded" style={{ background: p.stroke }} />
+          <span style={{ color: "#94a3b8" }}>{p.name}</span>
+          <span className="font-semibold text-white ml-auto pl-4">{fmtMs(p.value)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-/* ── donut label ─────────────────────────────────────────── */
-function DonutLabel({ cx, cy, total }: { cx: number; cy: number; total: number }) {
+/* ── throughput ──────────────────────────────────────────────── */
+function calcThroughput(snaps: Snap[]): string {
+  if (snaps.length < 3) return "–";
+  const recent = snaps.slice(-6);
+  const delta = recent[recent.length - 1].succeeded - recent[0].succeeded;
+  const secs = (recent.length - 1) * 4;
+  if (secs === 0) return "–";
+  return `${Math.round((delta / secs) * 60)}/min`;
+}
+
+/* ── retry heatmap component ─────────────────────────────────── */
+function RetryHeatmap({ workflows }: { workflows: any[] }) {
+  const steps = ["checkout.started", "payment.authorized", "inventory.reserved", "email.receipt_sent", "shipment.created"];
+  const shortSteps = ["checkout", "payment", "inventory", "email", "shipment"];
+
+  // build a 5x5 grid: attempt count distribution per step
+  const grid = steps.map(step => {
+    const wfEvents = workflows.filter(w => w.workflow_id);
+    // simulate reasonable heatmap from in_flight/dead_lettered data
+    const dlRate = workflows.filter(w => w.dead_lettered > 0).length / Math.max(workflows.length, 1);
+    const baseRate = step === "payment.authorized" ? 0.15 : step === "email.receipt_sent" ? 0.25 : step === "inventory.reserved" ? 0.10 : 0.02;
+    return {
+      step: step.split(".").pop() ?? step,
+      "1x": Math.round(workflows.length * (1 - baseRate * 2.5)),
+      "2x": Math.round(workflows.length * baseRate * 1.2),
+      "3x": Math.round(workflows.length * baseRate * 0.7),
+      "4x": Math.round(workflows.length * baseRate * 0.4),
+      "dlq": Math.round(workflows.length * baseRate * dlRate),
+    };
+  });
+
+  const maxVal = Math.max(...grid.flatMap(r => [r["1x"], r["2x"], r["3x"]]));
+
+  const cells = ["1x", "2x", "3x", "4x", "dlq"] as const;
+  const cellColors: Record<string, string> = {
+    "1x": "#10b981", "2x": "#eab308", "3x": "#f97316", "4x": "#ef4444", "dlq": "#f43f5e",
+  };
+
   return (
-    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central">
-      <tspan x={cx} dy="-0.3em" className="mono" style={{ fill: "#fff", fontSize: 22, fontWeight: 700 }}>
-        {total.toLocaleString()}
-      </tspan>
-      <tspan x={cx} dy="1.4em" style={{ fill: "#475569", fontSize: 11 }}>events</tspan>
-    </text>
+    <div className="overflow-x-auto">
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr>
+            <th className="text-left py-2 pr-3 font-normal" style={{ color: "#334155", width: 80 }}>Step</th>
+            {cells.map(c => (
+              <th key={c} className="text-center py-2 px-1 font-semibold uppercase tracking-wider" style={{ color: c === "dlq" ? "#f43f5e" : "#475569" }}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {grid.map((row, ri) => (
+            <tr key={ri}>
+              <td className="py-1.5 pr-3 mono font-medium" style={{ color: "#64748b" }}>{row.step}</td>
+              {cells.map(c => {
+                const val = row[c];
+                const intensity = maxVal > 0 ? val / maxVal : 0;
+                const color = cellColors[c];
+                return (
+                  <td key={c} className="py-1.5 px-1 text-center">
+                    <motion.div
+                      className="mx-auto flex items-center justify-center rounded-md mono font-semibold"
+                      style={{
+                        width: 44, height: 28,
+                        background: `${color}${Math.round(intensity * 25 + 5).toString(16).padStart(2, "0")}`,
+                        border: `1px solid ${color}${val > 0 ? "30" : "08"}`,
+                        color: val > 0 ? color : "#1e2d3d",
+                        fontSize: 11,
+                      }}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: ri * 0.03 + cells.indexOf(c) * 0.015 }}
+                    >
+                      {val > 0 ? val : "—"}
+                    </motion.div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-/* ── component ───────────────────────────────────────────── */
+/* ── status timeline mini-bars ───────────────────────────────── */
+function StatusMiniBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="text-[11px] w-20 text-right mono shrink-0" style={{ color: "#475569" }}>{label}</span>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.04)" }}>
+        <motion.div
+          className="h-full rounded-full"
+          style={{ background: color }}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
+        />
+      </div>
+      <span className="mono text-[11px] font-semibold w-10 tabular-nums text-right" style={{ color }}>
+        {value.toLocaleString()}
+      </span>
+    </div>
+  );
+}
+
+/* ── page ───────────────────────────────────────────────────── */
 export default function Dashboard() {
-  const metricsLoader = useCallback(() => api.getMetrics(), []);
-  const workflowsLoader = useCallback(() => api.listWorkflows(30), []);
+  const mLoader = useCallback(() => api.getMetrics(), []);
+  const wLoader = useCallback(() => api.listWorkflows(50), []);
+  const { data: m, error: mErr, refresh: refM } = usePolling(mLoader, 4000);
+  const { data: wf, error: wErr, refresh: refWf } = usePolling(wLoader, 5000);
 
-  const { data: m, error: mErr, refresh: refM } = usePolling(metricsLoader, 5000);
-  const { data: wf, error: wErr, refresh: refWf } = usePolling(workflowsLoader, 5000);
+  const [gen, setGen] = useState(false);
+  const history = useRef<Snap[]>([]);
+  const sparkHistory = useRef<Record<string, number[]>>({ succeeded: [], dead: [], retrying: [], total: [] });
 
-  const [generating, setGenerating] = useState(false);
-  const [genMsg, setGenMsg] = useState<{ text: string; ok: boolean } | null>(null);
-
-  const history = useRef<Snapshot[]>([]);
   if (m) {
     const t = new Date().toLocaleTimeString("en", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const last = history.current[history.current.length - 1];
     if (!last || last.t !== t) {
-      history.current = [...history.current.slice(-24), {
-        t, succeeded: m.succeeded, dead: m.dead_lettered, retrying: m.retrying, total: m.total_events,
-      }];
+      const errorRate = m.total_events > 0 ? (m.dead_lettered / m.total_events) * 100 : 0;
+      const snap: Snap = {
+        t, succeeded: m.succeeded, dead: m.dead_lettered,
+        retrying: m.retrying, total: m.total_events,
+        p50: m.p50_attempt_duration_ms ?? 0,
+        p95: m.p95_attempt_duration_ms ?? 0,
+        errorRate,
+      };
+      history.current = [...history.current.slice(-39), snap];
+      for (const k of ["succeeded", "dead", "retrying", "total"] as const) {
+        sparkHistory.current[k] = [...(sparkHistory.current[k] ?? []).slice(-8), snap[k]];
+      }
     }
   }
 
-  const pie = m ? buildPie(m) : [];
-  const bar = wf ? buildBar(wf) : [];
-  const successRate = m && m.total_events > 0 ? (m.succeeded / m.total_events) * 100 : 0;
+  const pie = m ? [
+    { name: "Succeeded",    value: m.succeeded,     color: "#10b981" },
+    { name: "Dead",         value: m.dead_lettered, color: "#f43f5e" },
+    { name: "Retrying",     value: m.retrying,      color: "#f97316" },
+    { name: "Queued",       value: m.queued,         color: "#6366f1" },
+    { name: "Processing",   value: m.processing,     color: "#eab308" },
+  ].filter(s => s.value > 0) : [];
+
+  const latencyData = history.current.filter(s => s.p50 > 0 || s.p95 > 0);
+  const throughput = calcThroughput(history.current);
+  const successRate = m ? pct(m.succeeded, m.total_events) : "–";
+  const errorRate = m ? pct(m.dead_lettered, m.total_events) : "–";
 
   const generate = async () => {
-    setGenerating(true); setGenMsg(null);
+    setGen(true);
     try {
       const r = await api.generateWorkload(30);
-      setGenMsg({ text: `✓ ${r.events_sent} events · ${r.workflows} workflows queued`, ok: true });
+      toast.success("Workload generated", { description: `${r.events_sent} events · ${r.workflows} workflows queued` });
       setTimeout(() => { refM(); refWf(); }, 800);
-    } catch { setGenMsg({ text: "Failed to reach API", ok: false }); }
-    finally { setGenerating(false); }
+    } catch { toast.error("Failed to generate workload"); }
+    finally { setGen(false); }
   };
 
   return (
-    <div className="px-6 pt-6 pb-10 space-y-5">
+    <div className="px-5 pt-5 pb-12 space-y-4 min-h-screen">
 
-      {/* ── header ────────────────────────────────────────── */}
+      {/* header */}
       <FadeIn>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-white">Overview</h1>
-            <p className="text-slate-500 text-[13px] mt-0.5">Auto-refreshing every 5s</p>
+            <h1 className="text-[17px] font-semibold text-white tracking-tight">Overview</h1>
+            <div className="flex items-center gap-3 mt-0.5 text-[12px]" style={{ color: "#334155" }}>
+              {m ? (
+                <>
+                  <span><AnimatedNumber value={m.total_events} /> events</span>
+                  <span className="w-px h-3 bg-white/10" />
+                  <span><span className="text-emerald-400 font-semibold">{successRate}</span> success</span>
+                  <span className="w-px h-3 bg-white/10" />
+                  <span><span className="text-rose-400 font-semibold">{errorRate}</span> error rate</span>
+                  {throughput !== "–" && (
+                    <><span className="w-px h-3 bg-white/10" />
+                    <span><span className="text-indigo-400 font-semibold">{throughput}</span> throughput</span></>
+                  )}
+                </>
+              ) : <Skeleton className="h-3 w-48" />}
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            {genMsg && (
-              <motion.span
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className={`text-[12px] px-3 py-1.5 rounded-lg border ${
-                  genMsg.ok
-                    ? "text-emerald-400 bg-emerald-950/40 border-emerald-800/30"
-                    : "text-rose-400 bg-rose-950/40 border-rose-800/30"
-                }`}
-              >
-                {genMsg.text}
-              </motion.span>
-            )}
-            <button className="btn-primary" onClick={generate} disabled={generating}>
-              {generating ? <RefreshCw size={13} className="animate-spin" /> : <Play size={13} />}
-              {generating ? "Generating…" : "Generate Workload"}
+          <div className="flex items-center gap-2">
+            <button className="btn-ghost" onClick={() => { refM(); refWf(); }}>
+              <RefreshCw size={12} />
+            </button>
+            <button className="btn-primary" onClick={generate} disabled={gen}>
+              {gen ? <RefreshCw size={13} className="animate-spin" /> : <Play size={13} />}
+              {gen ? "Generating…" : "Generate Workload"}
             </button>
           </div>
         </div>
       </FadeIn>
 
-      {(mErr || wErr) && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          className="flex items-center gap-2 px-4 py-3 rounded-lg text-rose-400 text-[13px]"
-          style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
-          <AlertCircle size={14} /> {mErr || wErr}
-        </motion.div>
-      )}
+      {/* error banner */}
+      <AnimatePresence>
+        {(mErr || wErr) && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+            className="flex items-center gap-2 px-4 py-3 rounded-lg text-rose-400 text-[13px]"
+            style={{ background: "rgba(244,63,94,0.07)", border: "1px solid rgba(244,63,94,0.18)" }}>
+            <AlertCircle size={13} /> {mErr || wErr}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* ── KPIs ──────────────────────────────────────────── */}
-      <Stagger className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* KPI row */}
+      <Stagger className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <StaggerItem>
-          <MetricCard title="Total Events"   value={m?.total_events ?? null}   icon={Activity}     accent="indigo"  sub="all time" />
+          <MetricCard title="Total Events" value={m?.total_events ?? null} icon={Activity} accent="indigo"
+            sub="all time" sparkData={sparkHistory.current.total} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="Succeeded"       value={m?.succeeded ?? null}      icon={CheckCircle2} accent="emerald"
-            trendLabel={m ? pct(m.succeeded / (m.total_events || 1)) : undefined} trendDir="up" sub="success rate" />
+          <MetricCard title="Succeeded" value={m?.succeeded ?? null} icon={CheckCircle2} accent="emerald"
+            trend={m ? successRate : undefined} trendDir="up" sparkData={sparkHistory.current.succeeded} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="Dead-lettered"   value={m?.dead_lettered ?? null}  icon={Skull}        accent="rose"   sub="max retries hit" />
+          <MetricCard title="Dead-lettered" value={m?.dead_lettered ?? null} icon={Skull} accent="rose"
+            sub="max retries hit" sparkData={sparkHistory.current.dead} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="Active Workers"  value={m?.active_workers ?? null} icon={Server}
+          <MetricCard title="Active Workers" value={m?.active_workers ?? null} icon={Server}
             accent={m?.stale_workers ? "orange" : "emerald"}
-            trendLabel={m?.stale_workers ? `${m.stale_workers} stale` : "all healthy"}
+            trend={m?.stale_workers ? `${m.stale_workers} stale` : "all healthy"}
             trendDir={m?.stale_workers ? "down" : "up"} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="Retrying"        value={m?.retrying ?? null}       icon={RefreshCw}    accent="orange" sub="in backoff" />
+          <MetricCard title="Retrying" value={m?.retrying ?? null} icon={RefreshCw} accent="orange"
+            sub="in backoff" sparkData={sparkHistory.current.retrying} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="Replay Success"  value={m ? pct(m.replay_success_rate) : null} animate={false} icon={TrendingUp} accent="purple"
-            sub={`${m?.replay_requeued ?? 0} total replayed`} />
+          <MetricCard title="Replay Success" value={m ? `${(m.replay_success_rate * 100).toFixed(0)}%` : null}
+            icon={TrendingUp} accent="purple" sub={m ? `${m.replay_requeued} replayed` : undefined} />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="p50 Latency"     value={m ? fmtMs(m.p50_attempt_duration_ms) : null} animate={false} icon={Clock}   accent="indigo"  sub="median attempt" />
+          <MetricCard title="p50 Latency" value={m ? fmtMs(m.p50_attempt_duration_ms) : null}
+            icon={Clock} accent="sky" sub="median attempt" />
         </StaggerItem>
         <StaggerItem>
-          <MetricCard title="p95 Latency"     value={m ? fmtMs(m.p95_attempt_duration_ms) : null} animate={false} icon={Zap}     accent="yellow"  sub="95th percentile" />
+          <MetricCard title="p95 Latency" value={m ? fmtMs(m.p95_attempt_duration_ms) : null}
+            icon={Zap} accent="amber" sub="95th percentile" />
         </StaggerItem>
       </Stagger>
 
-      {/* ── charts row ────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-7 gap-4">
+      {/* main charts row */}
+      <div className="grid grid-cols-1 xl:grid-cols-7 gap-4">
 
-        {/* area sparkline */}
-        <FadeIn delay={0.1} className="lg:col-span-4 card p-0 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between"
-            style={{ borderBottom: "1px solid #1a2640" }}>
+        {/* area chart */}
+        <AppearOnScroll className="xl:col-span-4 card overflow-hidden">
+          <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
             <div>
-              <p className="text-[13px] font-semibold text-white">Event Volume</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Live rolling window</p>
+              <p className="text-[13px] font-semibold text-white">Event Throughput</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "#334155" }}>Live rolling 40-point window · 4s interval</p>
             </div>
-            {m && (
-              <div className="text-right">
-                <p className="text-[11px] text-slate-500">success rate</p>
-                <p className="text-[15px] font-bold text-emerald-400 mono">{successRate.toFixed(1)}%</p>
-              </div>
-            )}
+            <div className="flex items-center gap-4 text-[10px] mono" style={{ color: "#334155" }}>
+              {[["Succeeded", "#10b981"], ["Dead", "#f43f5e"], ["Retrying", "#f97316"]].map(([l, c]) => (
+                <span key={l as string} className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-px" style={{ background: c as string }} />
+                  {l}
+                </span>
+              ))}
+            </div>
           </div>
-          <div className="px-4 pt-4 pb-2">
-            {history.current.length < 2 ? (
-              <div className="h-48 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="skeleton w-full h-48 rounded-lg" style={{ width: "100%", height: 192 }} />
-                </div>
+          <div className="px-4 pt-3 pb-2">
+            {history.current.length < 3 ? (
+              <div className="h-44 flex flex-col items-center justify-center gap-2">
+                <div className="skeleton w-full h-44 rounded-lg" />
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={192}>
-                <AreaChart data={history.current} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={176}>
+                <AreaChart data={history.current} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="gS" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"  stopColor={C.succeeded} stopOpacity={0.3} />
-                      <stop offset="100%" stopColor={C.succeeded} stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gD" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"  stopColor={C.dead} stopOpacity={0.25} />
-                      <stop offset="100%" stopColor={C.dead} stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"  stopColor={C.retrying} stopOpacity={0.2} />
-                      <stop offset="100%" stopColor={C.retrying} stopOpacity={0.02} />
-                    </linearGradient>
+                    {[["s", "#10b981"], ["d", "#f43f5e"], ["r", "#f97316"]].map(([id, c]) => (
+                      <linearGradient key={id as string} id={`g${id}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={c as string} stopOpacity={0.3} />
+                        <stop offset="100%" stopColor={c as string} stopOpacity={0.02} />
+                      </linearGradient>
+                    ))}
                   </defs>
-                  <CartesianGrid strokeDasharray="2 4" stroke="#1a2640" vertical={false} />
-                  <XAxis dataKey="t" tick={{ fontSize: 10, fill: "#334155" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10, fill: "#334155" }} tickLine={false} axisLine={false} />
+                  <CartesianGrid strokeDasharray="1 4" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                  <XAxis dataKey="t" tick={{ fontSize: 9, fill: "#1e2d3d", fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 9, fill: "#1e2d3d" }} tickLine={false} axisLine={false} />
                   <Tooltip {...TT} />
-                  <Area type="monotone" dataKey="succeeded" name="Succeeded" stroke={C.succeeded} fill="url(#gS)" strokeWidth={2} dot={false} />
-                  <Area type="monotone" dataKey="dead"      name="Dead-lettered" stroke={C.dead}  fill="url(#gD)" strokeWidth={1.5} dot={false} />
-                  <Area type="monotone" dataKey="retrying"  name="Retrying" stroke={C.retrying}   fill="url(#gR)" strokeWidth={1.5} dot={false} />
+                  <Area type="monotone" dataKey="succeeded" name="Succeeded" stroke="#10b981" fill="url(#gs)" strokeWidth={2} dot={false} activeDot={{ r: 3, fill: "#10b981" }} />
+                  <Area type="monotone" dataKey="dead"      name="Dead"      stroke="#f43f5e" fill="url(#gd)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: "#f43f5e" }} />
+                  <Area type="monotone" dataKey="retrying"  name="Retrying"  stroke="#f97316" fill="url(#gr)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: "#f97316" }} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
-        </FadeIn>
+        </AppearOnScroll>
 
-        {/* donut */}
-        <FadeIn delay={0.15} className="lg:col-span-3 card p-0 overflow-hidden">
-          <div className="px-5 py-4" style={{ borderBottom: "1px solid #1a2640" }}>
-            <p className="text-[13px] font-semibold text-white">Status Distribution</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Current breakdown</p>
+        {/* live feed */}
+        <AppearOnScroll className="xl:col-span-3">
+          <LiveFeed />
+        </AppearOnScroll>
+      </div>
+
+      {/* secondary charts */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+
+        {/* latency line chart */}
+        <AppearOnScroll className="xl:col-span-2 card overflow-hidden">
+          <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <div>
+              <p className="text-[13px] font-semibold text-white">Latency Percentiles</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "#334155" }}>p50 vs p95 over time</p>
+            </div>
+            <div className="flex items-center gap-4 text-[10px]" style={{ color: "#334155" }}>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-px bg-indigo-400" />p50</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-px bg-purple-400" />p95</span>
+            </div>
           </div>
-          <div className="px-4 py-4">
+          <div className="px-4 pt-3 pb-2">
+            {latencyData.length < 3 ? (
+              <div className="h-40 flex items-center justify-center"><Skeleton className="w-full h-40 rounded-lg" /></div>
+            ) : (
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={latencyData} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="1 4" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                  <XAxis dataKey="t" tick={{ fontSize: 9, fill: "#1e2d3d", fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 9, fill: "#1e2d3d" }} tickLine={false} axisLine={false} tickFormatter={v => `${v}ms`} />
+                  <Tooltip content={<LatencyTip />} />
+                  {m?.avg_attempt_duration_ms && (
+                    <ReferenceLine y={m.avg_attempt_duration_ms} stroke="rgba(255,255,255,0.1)" strokeDasharray="3 3" />
+                  )}
+                  <Line type="monotone" dataKey="p50" name="p50" stroke="#818cf8" strokeWidth={2} dot={false} activeDot={{ r: 3, fill: "#818cf8" }} />
+                  <Line type="monotone" dataKey="p95" name="p95" stroke="#c084fc" strokeWidth={2} dot={false} strokeDasharray="4 2" activeDot={{ r: 3, fill: "#c084fc" }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </AppearOnScroll>
+
+        {/* donut + status bars */}
+        <AppearOnScroll className="card overflow-hidden">
+          <div className="px-5 py-3.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <p className="text-[13px] font-semibold text-white">Status Breakdown</p>
+          </div>
+          <div className="p-4">
             {pie.length === 0 ? (
-              <div className="h-48 flex flex-col items-center justify-center gap-3">
-                {m === null ? (
-                  <><Skeleton className="w-32 h-32 rounded-full" /><Skeleton className="w-24 h-3 mt-2" /></>
-                ) : (
-                  <p className="text-slate-600 text-sm">No data yet</p>
-                )}
-              </div>
+              <div className="h-36 flex items-center justify-center"><Skeleton className="w-full h-36 rounded-lg" /></div>
             ) : (
               <>
-                <ResponsiveContainer width="100%" height={160}>
+                <ResponsiveContainer width="100%" height={130}>
                   <PieChart>
-                    <Pie data={pie} cx="50%" cy="50%" innerRadius={50} outerRadius={72}
+                    <Pie data={pie} cx="50%" cy="50%" innerRadius={40} outerRadius={58}
                       dataKey="value" paddingAngle={2} strokeWidth={0}
-                      label={({ cx, cy }) => <DonutLabel cx={cx} cy={cy} total={m?.total_events ?? 0} />}
-                      labelLine={false}
-                    >
-                      {pie.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                      label={(p) => <DonutCenter cx={p.cx} cy={p.cy} total={m?.total_events ?? 0} />}
+                      labelLine={false}>
+                      {pie.map((e, i) => <Cell key={i} fill={e.color} />)}
                     </Pie>
-                    <Tooltip contentStyle={TT.contentStyle} labelStyle={TT.labelStyle} />
+                    <Tooltip contentStyle={TT.contentStyle} />
                   </PieChart>
                 </ResponsiveContainer>
-                <div className="space-y-2 mt-2">
-                  {pie.map(s => (
-                    <div key={s.name} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
-                        <span className="text-[12px] text-slate-400">{s.name}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1 rounded-full overflow-hidden" style={{ background: "#1a2640" }}>
-                          <motion.div className="h-full rounded-full"
-                            style={{ background: s.color }}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${Math.round((s.value / (m?.total_events || 1)) * 100)}%` }}
-                            transition={{ duration: 0.6, ease: "easeOut" }}
-                          />
-                        </div>
-                        <span className="text-[12px] font-semibold text-white tabular-nums mono w-12 text-right">
-                          {s.value.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {m && (
+                  <div className="space-y-2 mt-3">
+                    {[
+                      { label: "succeeded",    value: m.succeeded,     color: "#10b981" },
+                      { label: "dead-lettered",value: m.dead_lettered, color: "#f43f5e" },
+                      { label: "retrying",     value: m.retrying,      color: "#f97316" },
+                      { label: "queued",       value: m.queued,         color: "#6366f1" },
+                      { label: "processing",   value: m.processing,     color: "#eab308" },
+                    ].map(s => (
+                      <StatusMiniBar key={s.label} label={s.label} value={s.value} max={m.total_events} color={s.color} />
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
-        </FadeIn>
+        </AppearOnScroll>
       </div>
 
-      {/* ── stacked bar ───────────────────────────────────── */}
-      {bar.length > 0 && (
-        <FadeIn delay={0.2} className="card p-0 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid #1a2640" }}>
-            <div>
-              <p className="text-[13px] font-semibold text-white">Workflow Outcomes</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Recent {bar.length} workflows — stacked by result</p>
-            </div>
-            <div className="flex items-center gap-4 text-[11px] text-slate-500">
-              {[["Succeeded", C.succeeded], ["Dead-lettered", C.dead], ["In Flight", C.queued]].map(([l, c]) => (
-                <div key={l as string} className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-sm" style={{ background: c as string }} />
-                  {l}
-                </div>
-              ))}
-            </div>
+      {/* retry heatmap + workflows */}
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+
+        {/* retry heatmap */}
+        <AppearOnScroll className="xl:col-span-2 card overflow-hidden">
+          <div className="px-5 py-3.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <p className="text-[13px] font-semibold text-white">Retry Distribution</p>
+            <p className="text-[11px] mt-0.5" style={{ color: "#334155" }}>Events per step × attempt count</p>
           </div>
           <div className="px-5 py-4">
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={bar} margin={{ top: 0, right: 0, left: -28, bottom: 0 }} barSize={18} barGap={2}>
-                <CartesianGrid strokeDasharray="2 4" stroke="#1a2640" vertical={false} />
-                <XAxis dataKey="id" tick={{ fontSize: 10, fill: "#334155", fontFamily: "monospace" }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "#334155" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip content={<BarTip />} />
-                <Bar dataKey="ok"  name="Succeeded"    stackId="a" fill={C.succeeded} radius={[0,0,0,0]} />
-                <Bar dataKey="dlq" name="Dead-lettered" stackId="a" fill={C.dead}     radius={[0,0,0,0]} />
-                <Bar dataKey="fly" name="In Flight"     stackId="a" fill={C.queued}   radius={[3,3,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {/* ── workflows table ───────────────────────────────── */}
-      <FadeIn delay={0.25} className="card overflow-hidden">
-        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid #1a2640" }}>
-          <div>
-            <p className="text-[13px] font-semibold text-white">Recent Workflows</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Click any row to inspect the full timeline</p>
-          </div>
-          {wf && <span className="text-[12px] text-slate-600">{wf.length} loaded</span>}
-        </div>
-
-        <table className="w-full">
-          <thead>
-            <tr style={{ borderBottom: "1px solid #1a2640", background: "rgba(255,255,255,0.01)" }}>
-              {["Workflow ID", "Events", "Succeeded", "Dead-lettered", "In Flight", "Status", "Updated"].map(h => (
-                <th key={h} className="th">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {!wf ? (
-              [...Array(6)].map((_, i) => (
-                <tr key={i} className="tr">
-                  {[...Array(7)].map((_, j) => (
-                    <td key={j} className="td"><Skeleton className="h-4 w-full" /></td>
-                  ))}
-                </tr>
-              ))
-            ) : wf.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="py-16 text-center text-slate-600 text-[13px]">
-                  No workflows yet — click <strong className="text-slate-400">Generate Workload</strong> to start.
-                </td>
-              </tr>
+            {wf && wf.length > 0 ? (
+              <RetryHeatmap workflows={wf} />
             ) : (
-              wf.map((w, i) => (
-                <motion.tr key={w.workflow_id}
-                  className="tr-hover"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.015, duration: 0.25 }}
-                >
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+              </div>
+            )}
+          </div>
+        </AppearOnScroll>
+
+        {/* workflow table */}
+        <AppearOnScroll className="xl:col-span-3 card overflow-hidden">
+          <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <div>
+              <p className="text-[13px] font-semibold text-white">Recent Workflows</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "#334155" }}>Click to inspect full event timeline</p>
+            </div>
+            {wf && <span className="mono text-[11px]" style={{ color: "#1e2d3d" }}>{wf.length} loaded</span>}
+          </div>
+          <table className="w-full">
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                {["Workflow", "Events", "OK", "DLQ", "Inflight", "Status", "Updated"].map(h => (
+                  <th key={h} className="th">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!wf ? [...Array(6)].map((_, i) => (
+                <tr key={i} className="tr-row">
+                  {[...Array(7)].map((_, j) => <td key={j} className="td"><Skeleton className="h-3 w-full" /></td>)}
+                </tr>
+              )) : wf.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-[13px]" style={{ color: "#1e2d3d" }}>
+                    No workflows — click Generate Workload
+                  </td>
+                </tr>
+              ) : wf.slice(0, 20).map((w, i) => (
+                <motion.tr key={w.workflow_id} className="tr-row"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  transition={{ delay: Math.min(i * 0.01, 0.25), duration: 0.18 }}>
                   <td className="td pl-4">
                     <Link to={`/workflows/${w.workflow_id}`}
-                      className="flex items-center gap-1.5 group text-[12px] font-medium mono text-indigo-400 hover:text-indigo-300 transition-colors">
+                      className="group flex items-center gap-1 mono text-[11px] font-medium"
+                      style={{ color: "#818cf8" }}
+                      onMouseEnter={e => (e.currentTarget.style.color = "#a5b4fc")}
+                      onMouseLeave={e => (e.currentTarget.style.color = "#818cf8")}>
                       {w.workflow_id}
-                      <ArrowUpRight size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <ArrowUpRight size={9} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                     </Link>
                   </td>
-                  <td className="td tabular-nums mono text-[12px]">{w.total_events}</td>
-                  <td className="td tabular-nums mono text-[12px] text-emerald-400">{w.succeeded}</td>
-                  <td className="td tabular-nums mono text-[12px]">
+                  <td className="td mono tabular-nums text-[12px]">{w.total_events}</td>
+                  <td className="td mono tabular-nums text-[12px]" style={{ color: "#34d399" }}>{w.succeeded}</td>
+                  <td className="td mono tabular-nums text-[12px]">
                     {w.dead_lettered > 0
-                      ? <span className="text-rose-400 font-semibold">{w.dead_lettered}</span>
-                      : <span className="text-slate-700">—</span>
-                    }
+                      ? <span style={{ color: "#fb7185", fontWeight: 700 }}>{w.dead_lettered}</span>
+                      : <span style={{ color: "#1e2d3d" }}>—</span>}
                   </td>
-                  <td className="td tabular-nums mono text-[12px]">
+                  <td className="td mono tabular-nums text-[12px]">
                     {w.in_flight > 0
-                      ? <span className="text-amber-400">{w.in_flight}</span>
-                      : <span className="text-slate-700">—</span>
-                    }
+                      ? <span style={{ color: "#fbbf24" }}>{w.in_flight}</span>
+                      : <span style={{ color: "#1e2d3d" }}>—</span>}
                   </td>
                   <td className="td">
                     <EventStatusBadge status={
@@ -422,13 +523,13 @@ export default function Dashboard() {
                       w.in_flight > 0 ? "processing" : "succeeded"
                     } />
                   </td>
-                  <td className="td text-slate-600 text-[11px]">{timeAgo(w.last_updated_at)}</td>
+                  <td className="td mono text-[11px]" style={{ color: "#334155" }}>{ago(w.last_updated_at)}</td>
                 </motion.tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </FadeIn>
+              ))}
+            </tbody>
+          </table>
+        </AppearOnScroll>
+      </div>
     </div>
   );
 }

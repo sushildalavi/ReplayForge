@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +25,6 @@ DbDep = Annotated[Session, Depends(get_db)]
 @router.post("/api/events", status_code=201)
 def ingest_event(payload: EventCreate, db: DbDep) -> EventOut:
     event, duplicate = get_or_create_event(db, payload)
-
     if not duplicate:
         event.status = "queued"
         db.add(event)
@@ -34,10 +34,32 @@ def ingest_event(payload: EventCreate, db: DbDep) -> EventOut:
             publish_incoming(str(event.id))
         except Exception:
             log.exception("failed to publish event %s to stream", event.id)
-
     result = EventOut.model_validate(event)
     result.duplicate = duplicate
     return result
+
+
+@router.get("/api/events/recent")
+def recent_events(db: DbDep, limit: int = Query(default=30, le=100)) -> list[dict[str, Any]]:
+    """Recent activity feed — latest updated events across all statuses."""
+    rows = db.execute(
+        select(Event)
+        .order_by(Event.updated_at.desc())
+        .limit(limit)
+    ).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "workflow_id": r.workflow_id,
+            "event_type": r.event_type,
+            "service_name": r.service_name,
+            "status": r.status,
+            "attempt_count": r.attempt_count,
+            "last_error": r.last_error,
+            "updated_at": r.updated_at.replace(tzinfo=timezone.utc).isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/api/events/{event_id}")
