@@ -600,21 +600,16 @@ export default function Dashboard() {
                     </tr>
                   )
                   : wf.map((w, i) => (
-                      /* animation #28: scroll reveal on rows + animation #21: stagger */
-                      <AppearOnScroll
+                      <motion.tr
                         key={w.workflow_id}
-                        delay={Math.min(i * 0.03, 0.25)}
-                        className="contents"
+                        className="tr"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{
+                          delay: Math.min(i * 0.02, 0.25),
+                          duration: 0.2,
+                        }}
                       >
-                        <motion.tr
-                          className="tr"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{
-                            delay: Math.min(i * 0.02, 0.25),
-                            duration: 0.2,
-                          }}
-                        >
                           <td className="td" style={{ paddingLeft: 16 }}>
                             <Link
                               to={`/workflows/${w.workflow_id}`}
@@ -676,8 +671,7 @@ export default function Dashboard() {
                           <td className="td mono" style={{ fontSize: 11, color: "#334155" }}>
                             {ago(w.last_updated_at)}
                           </td>
-                        </motion.tr>
-                      </AppearOnScroll>
+                      </motion.tr>
                     ))}
               </tbody>
             </table>
