@@ -39,6 +39,19 @@ services:
       redis:
         condition: service_healthy
 
+  worker:
+    build: ./backend
+    command: python -m app.workers.worker
+    env_file: backend/.env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
 volumes:
   postgres-data:
   redis-data:
