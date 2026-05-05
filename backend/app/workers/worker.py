@@ -235,6 +235,12 @@ def run() -> None:
                         r.xack(stream_name, GROUP, msg_id)
                     except WorkerCrashError as exc:
                         log.error("worker crash simulated: %s", exc)
+                        # record the failure so attempt_count advances — prevents infinite crash loop on reclaim
+                        try:
+                            _handle_failure(db, event, worker, attempt_num, started_at, exc)
+                            r.xack(stream_name, GROUP, msg_id)
+                        except Exception:
+                            log.exception("could not record crash attempt")
                         db.execute(update(Worker).where(Worker.id == worker.id).values(status="crashed"))
                         db.commit()
                         db.close()
