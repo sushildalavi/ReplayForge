@@ -1,234 +1,98 @@
 import {
-  motion,
-  AnimatePresence,
-  useSpring,
-  useTransform,
-  useInView,
+  motion, AnimatePresence,
+  useSpring, useTransform, useInView,
 } from "framer-motion";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode, MouseEvent } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import type { ReactNode } from "react";
 
-const EASE = [0.21, 0.47, 0.32, 0.98] as [number, number, number, number];
+export const EASE = [0.21, 0.47, 0.32, 0.98] as const;
 
-/* ─────────────────────────────────────────────────────────────
-   AnimatedNumber — spring counter with tick animation
-   ───────────────────────────────────────────────────────────── */
-export function AnimatedNumber({
-  value,
-  decimals = 0,
-}: {
-  value: number;
-  decimals?: number;
-}) {
-  const spring = useSpring(value, { stiffness: 90, damping: 20 });
-  const display = useTransform(spring, (v) =>
+/* ── spring number counter ─────────────────────────── */
+export function AnimatedNumber({ value, decimals = 0 }: { value: number; decimals?: number }) {
+  const spring  = useSpring(value, { stiffness: 110, damping: 20 });
+  const display = useTransform(spring, v =>
     decimals ? v.toFixed(decimals) : Math.round(v).toLocaleString()
   );
-  const [text, setText] = useState(
+  const [text, setText] = useState(() =>
     decimals ? value.toFixed(decimals) : Math.round(value).toLocaleString()
   );
-  const [key, setKey] = useState(0);
-
-  useEffect(() => {
-    spring.set(value);
-  }, [value, spring]);
-
-  useEffect(() => {
-    const unsub = display.on("change", (v) => {
-      setText(v);
-      setKey((k) => k + 1);
-    });
-    return unsub;
-  }, [display]);
-
-  return (
-    <span key={key} className="tick">
-      {text}
-    </span>
-  );
+  useEffect(() => { spring.set(value) }, [value, spring]);
+  useEffect(() => display.on("change", v => setText(v)), [display]);
+  return <span className="tick">{text}</span>;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Skeleton — shimmer loading placeholder
-   ───────────────────────────────────────────────────────────── */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`skeleton ${className}`} />;
+  return <div className={"skeleton " + className} />;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Stagger container & item
-   ───────────────────────────────────────────────────────────── */
-export const staggerVariants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.06, delayChildren: 0.03 } },
+const staggerV = { hidden: {}, show: { transition: { staggerChildren: .055, delayChildren: .02 } } };
+const itemV = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: .32, ease: [0.21, 0.47, 0.32, 0.98] as [number,number,number,number] } },
 };
 
-export const staggerItemVariants = {
-  hidden: { opacity: 0, y: 14, scale: 0.97 },
-  show: {
-    opacity: 1,
-    y: 0,
-    scale: 1,
-    transition: { duration: 0.3, ease: EASE },
-  },
-};
+export function Stagger({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <motion.div className={className} variants={staggerV} initial="hidden" animate="show">{children}</motion.div>;
+}
+export function StaggerItem({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <motion.div className={className} variants={itemV}>{children}</motion.div>;
+}
 
-export function Stagger({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+export function FadeIn({ children, delay = 0, className = "" }: { children: ReactNode; delay?: number; className?: string }) {
   return (
-    <motion.div
-      className={className}
-      variants={staggerVariants}
-      initial="hidden"
-      animate="show"
-    >
+    <motion.div className={className} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: .32, delay, ease: [0.21, 0.47, 0.32, 0.98] }}>
       {children}
     </motion.div>
   );
 }
 
-export function StaggerItem({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <motion.div className={className} variants={staggerItemVariants}>
-      {children}
-    </motion.div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   FadeIn — opacity + y
-   ───────────────────────────────────────────────────────────── */
-export function FadeIn({
-  children,
-  delay = 0,
-  className = "",
-}: {
-  children: ReactNode;
-  delay?: number;
-  className?: string;
-}) {
-  return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, delay, ease: EASE }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   PageTransition — blur + opacity (animation #1)
-   ───────────────────────────────────────────────────────────── */
 export function PageTransition({ children }: { children: ReactNode }) {
   return (
     <motion.div
-      initial={{ opacity: 0, filter: "blur(6px)", y: 6 }}
-      animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
-      exit={{ opacity: 0, filter: "blur(3px)", y: -4 }}
-      transition={{ duration: 0.28, ease: EASE }}
-    >
+      initial={{ opacity: 0, filter: "blur(5px)" }}
+      animate={{ opacity: 1, filter: "blur(0px)" }}
+      exit={{ opacity: 0, filter: "blur(3px)" }}
+      transition={{ duration: .26, ease: "easeInOut" }}>
       {children}
     </motion.div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   AppearOnScroll — useInView trigger (animation #28)
-   ───────────────────────────────────────────────────────────── */
-export function AppearOnScroll({
-  children,
-  className = "",
-  delay = 0,
-}: {
-  children: ReactNode;
-  className?: string;
-  delay?: number;
-}) {
+export function AppearOnScroll({ children, className = "" }: { children: ReactNode; className?: string }) {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-50px" });
   return (
-    <motion.div
-      ref={ref}
-      className={className}
-      initial={{ opacity: 0, y: 16 }}
+    <motion.div ref={ref} className={className}
+      initial={{ opacity: 0, y: 18 }}
       animate={inView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.38, delay, ease: EASE }}
-    >
+      transition={{ duration: .38, ease: [0.21, 0.47, 0.32, 0.98] }}>
       {children}
     </motion.div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   SpotlightCard — mouse-follow radial gradient (animation #6)
-   ───────────────────────────────────────────────────────────── */
-export function SpotlightCard({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  const handleMouseMove = useCallback((e: MouseEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    el.style.setProperty("--mouse-x", `${x}%`);
-    el.style.setProperty("--mouse-y", `${y}%`);
-  }, []);
-
-  return (
-    <div
-      ref={ref}
-      className={`spotlight-card ${className}`}
-      onMouseMove={handleMouseMove}
-    >
-      {children}
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   PresenceFade — collapse/expand with AnimatePresence
-   ───────────────────────────────────────────────────────────── */
-export function PresenceFade({
-  show,
-  children,
-}: {
-  show: boolean;
-  children: ReactNode;
-}) {
+export function PresenceFade({ show, children }: { show: boolean; children: ReactNode }) {
   return (
     <AnimatePresence>
       {show && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
-          transition={{ duration: 0.2, ease: "easeInOut" }}
-          style={{ overflow: "hidden" }}
-        >
+        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }} transition={{ duration: .22, ease: "easeInOut" }}
+          style={{ overflow: "hidden" }}>
           {children}
         </motion.div>
       )}
     </AnimatePresence>
   );
+}
+
+export function SpotlightCard({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mouse-x", ((e.clientX - r.left) / r.width * 100) + "%");
+    el.style.setProperty("--mouse-y", ((e.clientY - r.top) / r.height * 100) + "%");
+  }, []);
+  return <div ref={ref} className={"spotlight " + className} onMouseMove={onMove}>{children}</div>;
 }
