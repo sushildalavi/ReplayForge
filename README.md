@@ -400,7 +400,7 @@ graph LR
 git clone https://github.com/sushildalavi/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform.git
 cd ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform
 cp backend/.env.example backend/.env
-docker compose up -d
+docker compose up -d                  # 3 workers, backend, frontend, postgres, redis
 ```
 
 Open **http://localhost:5173**
@@ -409,9 +409,66 @@ Open **http://localhost:5173**
 # Generate synthetic workload
 curl -X POST 'http://localhost:8000/api/demo/generate-workload?count=30'
 
-# Watch events process, retry, and dead-letter in real time
-# Open the dashboard and click any workflow to see its timeline
+# Watch events process, retry, and dead-letter in real time across 3 workers
+docker compose logs -f worker | grep '"event succeeded"'
 ```
+
+---
+
+## Production-grade features
+
+| Feature | Implementation |
+|---------|---------------|
+| **Horizontal worker scaling** | Workers auto-derive name from container hostname → `docker compose up -d --scale worker=N` adds replicas to the same Redis Streams consumer group |
+| **Multi-stage Docker builds** | Backend builder image (with gcc/libpq-dev) is dropped at runtime → smaller, hardened image with non-root `app` user |
+| **Health probes** | `GET /health/live` (process up) and `GET /health/ready` (Postgres + Redis reachable, returns 503 with detail if degraded) |
+| **Graceful shutdown** | Workers handle SIGTERM, drain in-flight events, mark themselves stopped in DB before exit |
+| **Crash recovery** | Worker crashes call `XAUTOCLAIM` on next startup to reclaim PEL entries from dead consumers (60s idle) |
+| **Structured JSON logging** | Every log line: `{ts, level, logger, message, request_id, service, env, worker, ...extras}` — pipeable into Datadog, Loki, Cloud Logging |
+| **Request correlation** | Middleware sets `X-Request-ID` header end-to-end (and adds `X-Response-Time-Ms`) |
+| **Global exception handler** | Returns structured `{error, request_id, details}` instead of HTML stack traces |
+| **Resource limits** | CPU/memory limits per service in compose; restart policies |
+| **Connection pooling** | SQLAlchemy `pool_size=5, max_overflow=10, pool_pre_ping=True, pool_recycle=300` (handles Neon idle suspend) |
+| **Idempotent migrations** | `alembic upgrade head` runs at backend start (no-op if up to date) |
+| **CI on every PR** | GitHub Actions: pytest with real Postgres + Redis services, frontend typecheck + build, Docker build smoke |
+
+### Scaling workers
+
+The worker service in `docker-compose.yml` runs 3 replicas by default. Bump it:
+
+```bash
+docker compose up -d --scale worker=10
+curl -s http://localhost:8000/api/workers | jq 'length'   # → 10
+```
+
+Each worker auto-registers as `worker-<container-id>`. Redis Streams consumer
+group `replayforge-workers` distributes pending entries across all consumers
+via `XREADGROUP`. No code changes required.
+
+### Production deploy
+
+```bash
+# Apply the production overlay (more replicas, nginx static frontend, JSON logs)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+What changes with the prod overlay:
+- 2× backend replicas (HA)
+- 5× worker replicas
+- Frontend served by nginx (not Vite dev server) on port 80
+- `ENVIRONMENT=production` (disables `/docs` Swagger UI)
+- Higher CPU/memory limits
+
+For a real cloud deploy, swap `DATABASE_URL` and `REDIS_URL` to managed services
+(Neon, RDS, Upstash, ElastiCache) and run only the `backend` + `worker` services.
+
+### Operations
+
+See **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)** for:
+- Health probe behaviour
+- Backup / restore scripts (`scripts/backup-db.sh`, `scripts/restore-db.sh`)
+- Common incident playbooks (workers crashed, DLQ growing, backlog draining)
+- All tunable env vars
 
 ---
 

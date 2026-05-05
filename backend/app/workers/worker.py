@@ -1,41 +1,32 @@
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import sys
+import threading
 import time
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core.logging import setup_logging
 from app.core.redis_streams import (
-    GROUP,
-    STREAM_INCOMING,
-    STREAM_RETRY,
-    ensure_consumer_group,
-    get_redis,
-    publish_deadletter,
-    schedule_retry,
+    GROUP, STREAM_INCOMING, STREAM_RETRY,
+    ensure_consumer_group, get_redis, publish_deadletter, schedule_retry,
 )
 from app.core.retry_policy import next_retry_delay, should_dead_letter
 from app.database import SessionLocal
 from app.models import DeadLetter, Event, EventAttempt, Worker
-from app.workers.heartbeat import HeartbeatThread, mark_worker_active, mark_worker_stopped
+from app.workers.heartbeat import HeartbeatThread, mark_worker_stopped
 from app.workers.retry_scheduler import RetrySchedulerThread
 
 log = logging.getLogger(__name__)
 
 
-class SimulatedFailure(Exception):
-    pass
-
-
-class WorkerCrashError(Exception):
-    pass
+class SimulatedFailure(Exception): pass
+class WorkerCrashError(Exception): pass
 
 
 def _now() -> datetime:
@@ -58,7 +49,6 @@ def _register_worker(db: Session, worker_name: str) -> Worker:
 
 
 def process_event_stub(event: Event) -> None:
-    """Simulate event processing with realistic failure rates."""
     from app.demo.checkout_simulator import should_crash, should_fail_event
 
     event_id = str(event.id)
@@ -66,10 +56,8 @@ def process_event_stub(event: Event) -> None:
 
     if event.payload_json.get("_force_fail"):
         raise SimulatedFailure("forced failure via _force_fail flag")
-
     if should_crash(event_id, attempt):
         raise WorkerCrashError("simulated worker crash")
-
     if should_fail_event(event_id, event.event_type, attempt):
         raise SimulatedFailure(f"{event.event_type} failed (simulated)")
 
@@ -79,32 +67,19 @@ def process_event_stub(event: Event) -> None:
 def _handle_success(db: Session, event: Event, worker: Worker, attempt_num: int, started_at: datetime) -> None:
     finished = _now()
     duration = int((finished - started_at).total_seconds() * 1000)
-    attempt = EventAttempt(
-        event_id=event.id,
-        attempt_number=attempt_num,
-        worker_id=worker.id,
-        worker_name=worker.worker_name,
-        status="succeeded",
-        started_at=started_at,
-        finished_at=finished,
-        duration_ms=duration,
-        metadata_json={},
-    )
-    db.add(attempt)
+    db.add(EventAttempt(
+        event_id=event.id, attempt_number=attempt_num,
+        worker_id=worker.id, worker_name=worker.worker_name,
+        status="succeeded", started_at=started_at, finished_at=finished,
+        duration_ms=duration, metadata_json={},
+    ))
     event.status = "succeeded"
     event.updated_at = _now()
     db.commit()
-    log.info("event %s succeeded (attempt %d)", event.id, attempt_num)
+    log.info("event succeeded", extra={"event_id": str(event.id), "attempt": attempt_num, "duration_ms": duration})
 
 
-def _handle_failure(
-    db: Session,
-    event: Event,
-    worker: Worker,
-    attempt_num: int,
-    started_at: datetime,
-    error: Exception,
-) -> None:
+def _handle_failure(db: Session, event: Event, worker: Worker, attempt_num: int, started_at: datetime, error: Exception) -> None:
     finished = _now()
     duration = int((finished - started_at).total_seconds() * 1000)
     error_msg = str(error)
@@ -112,64 +87,58 @@ def _handle_failure(
     event.attempt_count += 1
     event.last_error = error_msg
     event.updated_at = _now()
-
-    attempt = EventAttempt(
-        event_id=event.id,
-        attempt_number=attempt_num,
-        worker_id=worker.id,
-        worker_name=worker.worker_name,
-        status="failed",
-        error_message=error_msg,
-        started_at=started_at,
-        finished_at=finished,
-        duration_ms=duration,
-        metadata_json={},
-    )
-    db.add(attempt)
+    db.add(EventAttempt(
+        event_id=event.id, attempt_number=attempt_num,
+        worker_id=worker.id, worker_name=worker.worker_name,
+        status="failed", error_message=error_msg,
+        started_at=started_at, finished_at=finished,
+        duration_ms=duration, metadata_json={},
+    ))
 
     if should_dead_letter(event.attempt_count, event.max_attempts):
-        dl = DeadLetter(event_id=event.id, reason="max attempts exceeded", last_error=error_msg)
-        db.add(dl)
+        db.add(DeadLetter(event_id=event.id, reason="max attempts exceeded", last_error=error_msg))
         event.status = "dead_lettered"
         db.commit()
         publish_deadletter(str(event.id), "max attempts exceeded")
-        log.warning("event %s dead-lettered after %d attempts", event.id, event.attempt_count)
+        log.warning("event dead-lettered", extra={"event_id": str(event.id), "attempts": event.attempt_count})
     else:
         delay = next_retry_delay(event.attempt_count, jitter=True) or 0
-        retry_at = _now().__class__.fromtimestamp(_now().timestamp() + delay, tz=timezone.utc)
+        retry_at = _now() + timedelta(seconds=delay)
         event.status = "retrying"
         event.next_retry_at = retry_at
         db.commit()
         schedule_retry(str(event.id), retry_at)
-        log.info("event %s scheduled retry in %ds (attempt %d)", event.id, delay, event.attempt_count)
+        log.info("event retry scheduled", extra={"event_id": str(event.id), "delay_s": delay, "attempt": event.attempt_count})
 
 
 def _reclaim_orphans(consumer_name: str, streams: list[str]) -> None:
+    """XAUTOCLAIM PEL entries from dead consumers."""
     r = get_redis()
     for stream in streams:
         try:
             result = r.xautoclaim(stream, GROUP, consumer_name, min_idle_time=60_000, start_id="0-0", count=100)
             claimed = result[1] if isinstance(result, (list, tuple)) and len(result) > 1 else []
             if claimed:
-                log.info("reclaimed %d orphaned messages from %s", len(claimed), stream)
+                log.info("reclaimed orphans", extra={"count": len(claimed), "stream": stream})
         except Exception:
-            log.debug("xautoclaim failed for %s (stream may be empty)", stream)
+            log.debug("xautoclaim noop on %s (stream may be empty)", stream)
 
 
 def run() -> None:
-    worker_name = settings.worker_name
-    log.info("worker starting: %s", worker_name)
+    setup_logging()
+    import socket
+    worker_name = (settings.worker_name or "").strip() or f"worker-{socket.gethostname()[:12]}"
+    log.info("worker starting", extra={"worker": worker_name, "env": settings.environment})
 
     ensure_consumer_group(STREAM_INCOMING)
     ensure_consumer_group(STREAM_RETRY)
 
     db = SessionLocal()
     worker = _register_worker(db, worker_name)
-    log.info("registered as worker %s", worker.id)
+    log.info("worker registered", extra={"worker_id": str(worker.id), "name": worker_name})
 
-    heartbeat = HeartbeatThread(worker.id, SessionLocal)
+    heartbeat = HeartbeatThread(worker.id, SessionLocal, interval=settings.worker_heartbeat_interval)
     heartbeat.start()
-
     scheduler = RetrySchedulerThread(interval=1.0)
     scheduler.start()
 
@@ -178,12 +147,8 @@ def run() -> None:
     r = get_redis()
     shutdown = threading.Event()
 
-    import threading as threading_mod
-
-    shutdown = threading_mod.Event()
-
-    def _sigterm(*_):
-        log.info("SIGTERM received, shutting down")
+    def _sigterm(signum, _frame):
+        log.info("shutdown signal received", extra={"signal": signum})
         shutdown.set()
 
     signal.signal(signal.SIGTERM, _sigterm)
@@ -194,7 +159,9 @@ def run() -> None:
             streams = {STREAM_INCOMING: ">", STREAM_RETRY: ">"}
             try:
                 results = r.xreadgroup(
-                    GROUP, worker_name, streams, count=5, block=2000
+                    GROUP, worker_name, streams,
+                    count=settings.worker_xreadgroup_count,
+                    block=settings.worker_xreadgroup_block_ms,
                 )
             except Exception:
                 log.exception("xreadgroup failed, retrying")
@@ -205,6 +172,9 @@ def run() -> None:
                 continue
 
             for stream_name, messages in results:
+                if shutdown.is_set():
+                    log.info("draining halted — shutdown in progress")
+                    break
                 for msg_id, fields in messages:
                     event_id = fields.get("event_id")
                     if not event_id:
@@ -213,7 +183,7 @@ def run() -> None:
 
                     event = db.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
                     if not event:
-                        log.warning("event %s not found, acking", event_id)
+                        log.warning("event not found", extra={"event_id": event_id})
                         r.xack(stream_name, GROUP, msg_id)
                         continue
 
@@ -226,7 +196,6 @@ def run() -> None:
                     event.status = "processing"
                     event.updated_at = _now()
                     db.commit()
-
                     heartbeat.current_event_id = event.id
 
                     try:
@@ -234,8 +203,7 @@ def run() -> None:
                         _handle_success(db, event, worker, attempt_num, started_at)
                         r.xack(stream_name, GROUP, msg_id)
                     except WorkerCrashError as exc:
-                        log.error("worker crash simulated: %s", exc)
-                        # record the failure so attempt_count advances — prevents infinite crash loop on reclaim
+                        log.error("crash simulated", extra={"event_id": str(event.id)})
                         try:
                             _handle_failure(db, event, worker, attempt_num, started_at, exc)
                             r.xack(stream_name, GROUP, msg_id)
@@ -254,14 +222,16 @@ def run() -> None:
                         heartbeat.current_event_id = None
 
     finally:
+        log.info("worker draining and shutting down", extra={"worker": worker_name})
         heartbeat.stop()
         scheduler.stop()
-        mark_worker_stopped(db, worker.id)
+        try:
+            mark_worker_stopped(db, worker.id)
+        except Exception:
+            log.exception("could not mark worker stopped")
         db.close()
-        log.info("worker %s stopped", worker_name)
+        log.info("worker stopped cleanly", extra={"worker": worker_name})
 
 
 if __name__ == "__main__":
-    import threading
-    logging.basicConfig(level=settings.log_level)
     run()

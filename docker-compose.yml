@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: replayforge
       POSTGRES_PASSWORD: replayforge
@@ -10,14 +11,20 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U replayforge"]
+      test: ["CMD-SHELL", "pg_isready -U replayforge -d replayforge"]
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     volumes:
@@ -27,9 +34,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+          cpus: "0.3"
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
     env_file: backend/.env
     ports:
       - "8000:8000"
@@ -38,12 +53,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 4s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
   worker:
-    build: ./backend
-    command: python -m app.workers.worker
-    env_file: backend/.env
+    build:
+      context: ./backend
+      target: runtime
+    command: ["python", "-m", "app.workers.worker"]
     restart: unless-stopped
+    env_file: backend/.env
+    # WORKER_NAME left empty in .env so each replica auto-derives a unique name from its hostname
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,15 +80,34 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
+    deploy:
+      replicas: 3      # ← horizontally scaled out of the box
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.5"
+      restart_policy:
+        condition: on-failure
+        delay: 2s
+        max_attempts: 10
+        window: 60s
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
+    restart: unless-stopped
     ports:
       - "5173:5173"
     environment:
       - VITE_API_TARGET=http://backend:8000
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
 volumes:
   postgres-data:

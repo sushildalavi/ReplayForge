@@ -1,22 +1,67 @@
+from __future__ import annotations
+
+import os
+import socket
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _hostname_worker_name() -> str:
+    """Per-container worker name derived from hostname (Docker container ID)."""
+    host = socket.gethostname()
+    return f"worker-{host[:12]}"
+
+
+def _default_worker_name() -> str:
+    explicit = os.getenv("WORKER_NAME", "").strip()
+    return explicit if explicit else _hostname_worker_name()
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # ── core ─────────────────────────────────────────────
     database_url: str = "postgresql://replayforge:replayforge@localhost:5432/replayforge"
     redis_url: str = "redis://localhost:6379/0"
-    anthropic_api_key: str = ""
-    worker_name: str = "worker-1"
+
+    # ── worker ───────────────────────────────────────────
+    worker_name: str = _default_worker_name()
     max_attempts: int = 4
-    log_level: str = "INFO"
+    worker_heartbeat_interval: int = 5
+    worker_stale_threshold: int = 30
+    worker_xreadgroup_block_ms: int = 5000
+    worker_xreadgroup_count: int = 10
+
+    # ── ai ───────────────────────────────────────────────
+    anthropic_api_key: str = ""
+
+    # ── http ─────────────────────────────────────────────
     cors_origins: str = "http://localhost:5173"
+    request_timeout_seconds: int = 30
+
+    # ── observability ────────────────────────────────────
+    log_level: str = "INFO"
+    log_format: str = "json"  # "json" or "text"
+    environment: str = "development"  # "development" | "staging" | "production"
+
+    # ── pool sizing ──────────────────────────────────────
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_recycle: int = 300
+
+    def model_post_init(self, _ctx) -> None:
+        # If WORKER_NAME was set to empty string in env, replace with hostname-derived name
+        if not self.worker_name or not self.worker_name.strip():
+            object.__setattr__(self, "worker_name", _hostname_worker_name())
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
 
 
 @lru_cache
