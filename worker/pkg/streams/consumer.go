@@ -10,6 +10,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// NewTaskChannel returns an explicitly unbuffered channel (capacity = 0).
+// This forces XREADGROUP ingestion to block until a worker is ready to receive.
+func NewTaskChannel() chan redis.XMessage {
+	return make(chan redis.XMessage)
+}
+
 func EnsureConsumerGroup(ctx context.Context, rdb *redis.Client, streamName, groupName string) error {
 	err := rdb.XGroupCreateMkStream(ctx, streamName, groupName, "$").Err()
 	if err == nil {
