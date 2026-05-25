@@ -24,6 +24,7 @@ func StartJanitor(ctx context.Context, rdb *redis.Client, interval time.Duration
 func AutoClaimPending(ctx context.Context, rdb *redis.Client, streamName, groupName, consumerName string, minIdle time.Duration) ([]redis.XMessage, error) {
 	claimed := make([]redis.XMessage, 0)
 	start := "0-0"
+	minIdle = 5 * time.Second
 
 	for {
 		msgs, nextStart, err := rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
