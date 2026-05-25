@@ -20,6 +20,20 @@ services:
     volumes:
       - redis-data:/data
 
+  control-plane:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://replayforge_cp:replayforge_cp_pwd@postgres:5432/replayforge
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+
 volumes:
   postgres-data:
   redis-data:
