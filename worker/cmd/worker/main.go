@@ -10,12 +10,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	"replayforge/worker/pkg/streams"
 )
 
 type Application struct {
 	Redis      *redis.Client
 	DB         *pgxpool.Pool
 	ShutdownCh chan struct{}
+	TaskCh     chan redis.XMessage
 }
 
 func newApplication(ctx context.Context) (*Application, error) {
@@ -39,7 +42,12 @@ func newApplication(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 
-	return &Application{Redis: rdb, DB: db, ShutdownCh: make(chan struct{})}, nil
+	return &Application{
+		Redis:      rdb,
+		DB:         db,
+		ShutdownCh: make(chan struct{}),
+		TaskCh:     make(chan redis.XMessage),
+	}, nil
 }
 
 func waitForSignal() <-chan os.Signal {
@@ -50,29 +58,41 @@ func waitForSignal() <-chan os.Signal {
 
 func (a *Application) Teardown() {
 	close(a.ShutdownCh)
-	for {
-		select {
-		case <-a.ShutdownCh:
-			// drain channel once to avoid senders blocking on stale references
-		default:
-			a.DB.Close()
-			_ = a.Redis.Close()
-			return
-		}
-	}
+	a.DB.Close()
+	_ = a.Redis.Close()
 }
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	app, err := newApplication(ctx)
 	if err != nil {
 		log.Fatalf("worker boot failed: %v", err)
 	}
 
+	streamName := "workflow_events"
+	groupName := "replay_forge_workers"
+	consumerName := "go-worker"
+
+	if err := streams.EnsureConsumerGroup(ctx, app.Redis, streamName, groupName); err != nil {
+		log.Fatalf("consumer group init failed: %v", err)
+	}
+
+	go func() {
+		err := streams.StartBlockingLoop(ctx, app.Redis, streamName, groupName, consumerName, func(msg redis.XMessage) {
+			app.TaskCh <- msg
+		})
+		if err != nil && ctx.Err() == nil {
+			log.Printf("stream loop stopped: %v", err)
+		}
+	}()
+
 	log.Println("go worker initialized; awaiting signal")
 	<-waitForSignal()
 	log.Println("signal intercepted; draining resources")
 	time.Sleep(250 * time.Millisecond)
+	cancel()
 	app.Teardown()
 	log.Println("teardown complete")
 }
