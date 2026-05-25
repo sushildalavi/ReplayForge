@@ -2,7 +2,9 @@ package streams
 
 import (
 	"context"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -51,4 +53,26 @@ func StartBlockingLoop(ctx context.Context, rdb *redis.Client, streamName, group
 			}
 		}
 	}
+}
+
+func SpawnWorkerPool(ctx context.Context, in <-chan redis.XMessage, handle func(redis.XMessage)) *sync.WaitGroup {
+	workerCount := runtime.NumCPU() * 2
+	wg := &sync.WaitGroup{}
+	wg.Add(workerCount)
+
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg := <-in:
+					handle(msg)
+				}
+			}
+		}()
+	}
+
+	return wg
 }
