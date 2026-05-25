@@ -18,6 +18,8 @@ DATABASE_URL = os.getenv(
     "postgresql://replayforge_cp:replayforge_cp_pwd@localhost:5432/replayforge",
 )
 POST_KILL_CONVERGENCE_WAIT_SECONDS = 45
+GROUP = os.getenv("CHAOS_GROUP", "replay_forge_workers")
+ACTIVE_CONSUMER = os.getenv("CHAOS_ACTIVE_CONSUMER", "chaos-finalizer")
 
 
 def kill_worker_mid_transit() -> None:
@@ -67,6 +69,35 @@ def verify_registry_state() -> None:
         )
 
 
+def final_janitor_flush() -> None:
+    client = redis.from_url(REDIS_URL, decode_responses=True)
+    consumers = client.xinfo_consumers(STREAM, GROUP)
+    for c in consumers:
+        pending = int(c.get("pending", 0))
+        idle_ms = int(c.get("idle", 0))
+        name = c.get("name", "")
+        if pending <= 0:
+            continue
+        if name == ACTIVE_CONSUMER:
+            continue
+        if idle_ms < 5000:
+            continue
+
+        start = "0-0"
+        while True:
+            msgs, next_start, _deleted = client.xautoclaim(
+                STREAM,
+                GROUP,
+                ACTIVE_CONSUMER,
+                min_idle_time=5000,
+                start_id=start,
+                count=100,
+            )
+            if not msgs or next_start == "0-0":
+                break
+            start = next_start
+
+
 def seed_events() -> None:
     client = redis.from_url(REDIS_URL, decode_responses=True)
     t0 = time.perf_counter()
@@ -92,6 +123,7 @@ def seed_events() -> None:
     print(f"seed_complete total={TOTAL} elapsed_s={elapsed:.2f}")
     print(f"waiting_for_convergence_s={POST_KILL_CONVERGENCE_WAIT_SECONDS}")
     time.sleep(POST_KILL_CONVERGENCE_WAIT_SECONDS)
+    final_janitor_flush()
     verify_registry_state()
 
 
