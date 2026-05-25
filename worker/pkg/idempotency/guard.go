@@ -35,12 +35,14 @@ func AtomicClaim(ctx context.Context, db *pgxpool.Pool, eventUUID, pipelineID st
 	defer tx.Rollback(ctx)
 
 	var status string
+	var retryCount int
+	var maxRetries int
 	err = tx.QueryRow(ctx, `
-		SELECT status::text
+		SELECT status::text, retry_count, max_retries
 		FROM event_idempotency_registry
 		WHERE event_uuid = $1::uuid
 		FOR UPDATE
-	`, eventUUID).Scan(&status)
+	`, eventUUID).Scan(&status, &retryCount, &maxRetries)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ClaimResult{}, err
@@ -48,7 +50,7 @@ func AtomicClaim(ctx context.Context, db *pgxpool.Pool, eventUUID, pipelineID st
 		return ClaimResult{}, err
 	}
 
-	result, err := evaluateLockedState(status)
+	result, err := evaluateLockedState(ctx, tx, eventUUID, status, retryCount, maxRetries)
 	if err != nil {
 		return ClaimResult{}, err
 	}
@@ -59,12 +61,24 @@ func AtomicClaim(ctx context.Context, db *pgxpool.Pool, eventUUID, pipelineID st
 	return result, nil
 }
 
-func evaluateLockedState(status string) (ClaimResult, error) {
+func evaluateLockedState(ctx context.Context, tx pgx.Tx, eventUUID, status string, retryCount, maxRetries int) (ClaimResult, error) {
 	switch status {
 	case "completed":
 		return ClaimResult{Claimed: false, Status: "completed"}, nil
 	case "processing":
 		return ClaimResult{Claimed: false, Status: "processing"}, fmt.Errorf("event is currently processing")
+	case "failed":
+		if retryCount >= maxRetries {
+			if _, err := tx.Exec(ctx, `
+				UPDATE event_idempotency_registry
+				SET status = 'terminal', updated_at = CURRENT_TIMESTAMP
+				WHERE event_uuid = $1::uuid
+			`, eventUUID); err != nil {
+				return ClaimResult{}, err
+			}
+			return ClaimResult{Claimed: false, Status: "terminal"}, nil
+		}
+		return ClaimResult{Claimed: true, Status: "processing"}, nil
 	default:
 		return ClaimResult{Claimed: false, Status: status}, nil
 	}
