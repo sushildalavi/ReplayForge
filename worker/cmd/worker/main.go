@@ -6,14 +6,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
 type Application struct {
-	Redis *redis.Client
-	DB    *pgxpool.Pool
+	Redis      *redis.Client
+	DB         *pgxpool.Pool
+	ShutdownCh chan struct{}
 }
 
 func newApplication(ctx context.Context) (*Application, error) {
@@ -37,7 +39,7 @@ func newApplication(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 
-	return &Application{Redis: rdb, DB: db}, nil
+	return &Application{Redis: rdb, DB: db, ShutdownCh: make(chan struct{})}, nil
 }
 
 func waitForSignal() <-chan os.Signal {
@@ -46,16 +48,31 @@ func waitForSignal() <-chan os.Signal {
 	return sigCh
 }
 
+func (a *Application) Teardown() {
+	close(a.ShutdownCh)
+	for {
+		select {
+		case <-a.ShutdownCh:
+			// drain channel once to avoid senders blocking on stale references
+		default:
+			a.DB.Close()
+			_ = a.Redis.Close()
+			return
+		}
+	}
+}
+
 func main() {
 	ctx := context.Background()
 	app, err := newApplication(ctx)
 	if err != nil {
 		log.Fatalf("worker boot failed: %v", err)
 	}
-	defer app.DB.Close()
-	defer app.Redis.Close()
 
 	log.Println("go worker initialized; awaiting signal")
 	<-waitForSignal()
-	log.Println("signal intercepted")
+	log.Println("signal intercepted; draining resources")
+	time.Sleep(250 * time.Millisecond)
+	app.Teardown()
+	log.Println("teardown complete")
 }
