@@ -74,11 +74,7 @@ func SpawnWorkerPool(ctx context.Context, in <-chan redis.XMessage, handle func(
 				case <-ctx.Done():
 					return
 				case msg := <-in:
-					if handle(msg) {
-						// Cooldown after successful execution gives DB/network layers
-						// a deterministic timeslice to flush writes before hard termination.
-						time.Sleep(100 * time.Millisecond)
-					}
+					_ = handle(msg)
 				}
 			}
 		}()
