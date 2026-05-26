@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate control-plane path
-        run: test -f api/requirements.txt
+        run: test -f requirements.txt
 
       - uses: actions/setup-python@v5
         with:

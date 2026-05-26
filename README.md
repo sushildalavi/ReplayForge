@@ -13,6 +13,16 @@ ReplayForge is built to debug and recover asynchronous workflow failures under c
 - Reclaims orphaned pending entries with janitor recovery loops
 - Exposes operational visibility via API + frontend dashboard
 
+## Frontend Screenshots
+
+![Dashboard](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/dashboard.png)
+![Dashboard Charts](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/dashboard-charts.png)
+![Workflow Detail](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/workflow-detail.png)
+![Workflow Timeline Expanded](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/workflow-timeline-expanded.png)
+![Dead Letters](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/dead-letters.png)
+![Workers](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/workers.png)
+![Command Palette](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/screenshots/command-palette.png)
+
 ## Architecture
 
 ```mermaid
@@ -124,23 +134,6 @@ make up
 make chaos
 make load
 make check
-```
-
-## Playwright Screenshot Automation
-
-ReplayForge includes a Playwright script for deterministic UI capture used in docs.
-
-- Script: [scripts/take-screenshots.js](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/scripts/take-screenshots.js)
-- Output: `docs/screenshots/*.png`
-
-Run it:
-
-```bash
-# Ensure frontend + API are running on 5173 and 8000
-cd scripts
-npm install
-npx playwright install chromium
-node take-screenshots.js
 ```
 
 ## Reliability Diagnostics
