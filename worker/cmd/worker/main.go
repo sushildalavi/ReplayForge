@@ -144,43 +144,30 @@ func main() {
 		eventUUID := normalizeUUID(fmt.Sprintf("%v", msg.Values["event_uuid"]))
 		pipelineID := normalizeUUID(fmt.Sprintf("%v", msg.Values["pipeline_id"]))
 		if eventUUID == "" || pipelineID == "" {
-			// Invalid payloads are non-recoverable; ack to avoid poison-message loops.
-			_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
-			return true
-		}
-
-		claim, err := idempotency.AtomicClaim(ctx, app.DB, eventUUID, pipelineID)
-		if err != nil {
-			// leave unacked on hard DB errors so janitor can reclaim
-			return false
-		}
-		if !claim.Claimed && claim.Status == "completed" {
-			// This message was previously committed in Postgres; safe to ack duplicate delivery.
-			_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
-			return true
-		}
-		if !claim.Claimed && claim.Status == "terminal" {
 			_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
 			return true
 		}
 
 		payloadBytes, _ := json.Marshal(msg.Values)
-		persisted := false
-		if err := idempotency.CommitCompleted(ctx, app.DB, eventUUID, payloadBytes); err != nil {
-			_, _ = app.DB.Exec(ctx, `
-				UPDATE event_idempotency_registry
-				SET status='failed', retry_count=retry_count+1, updated_at=CURRENT_TIMESTAMP
-				WHERE event_uuid=$1::uuid
-			`, eventUUID)
+		_, err := idempotency.ClaimAndComplete(ctx, app.DB, eventUUID, pipelineID, payloadBytes)
+		if err != nil {
 			return false
 		}
-		persisted = true
 
-		// Two-phase durability rule:
-		// Redis ack is only allowed after the DB commit returned success.
-		if persisted {
-			_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
+		if ctx.Err() != nil {
+			return false
 		}
+
+		var verifiedStatus string
+		probeErr := app.DB.QueryRow(ctx,
+			`SELECT status::text FROM event_idempotency_registry WHERE event_uuid = $1::uuid`,
+			eventUUID,
+		).Scan(&verifiedStatus)
+		if probeErr != nil || (verifiedStatus != "completed" && verifiedStatus != "terminal") {
+			return false
+		}
+
+		_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
 		return true
 	}
 
