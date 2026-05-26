@@ -84,7 +84,11 @@ def final_janitor_flush() -> None:
             continue
 
         start = "0-0"
+        seen_starts = set()
         while True:
+            if start in seen_starts:
+                break
+            seen_starts.add(start)
             msgs, next_start, _deleted = client.xautoclaim(
                 STREAM,
                 GROUP,
@@ -93,7 +97,7 @@ def final_janitor_flush() -> None:
                 start_id=start,
                 count=100,
             )
-            if not msgs or next_start == "0-0":
+            if not msgs or next_start == "0-0" or next_start == start:
                 break
             start = next_start
 
