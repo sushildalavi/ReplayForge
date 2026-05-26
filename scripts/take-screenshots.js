@@ -6,6 +6,7 @@ const OUT = path.resolve(__dirname, '../docs/screenshots');
 fs.mkdirSync(OUT, { recursive: true });
 
 const BASE = 'http://localhost:5173';
+const API_BASE = 'http://localhost:8000';
 const WAIT_MS = 4000;
 
 async function waitForData(page, selector, timeout = 8000) {
@@ -55,10 +56,8 @@ async function waitForData(page, selector, timeout = 8000) {
   // ── 6. Workflow Detail — grab first workflow ID from API
   console.log('📸 workflow-detail...');
   try {
-    const resp = await page.evaluate(async () => {
-      const r = await fetch('http://localhost:8000/api/workflows?limit=1');
-      return r.json();
-    });
+    const r = await fetch(`${API_BASE}/api/workflows?limit=1`);
+    const resp = await r.json();
     const wfId = resp[0]?.workflow_id;
     if (wfId) {
       await page.goto(`${BASE}/workflows/${wfId}`, { waitUntil: 'networkidle' });
@@ -72,6 +71,12 @@ async function waitForData(page, selector, timeout = 8000) {
         await page.waitForTimeout(600);
         await page.screenshot({ path: `${OUT}/workflow-timeline-expanded.png`, fullPage: false });
       }
+    } else {
+      // Fallback: capture workflows listing when no detail ID is available.
+      await page.goto(`${BASE}/workflows`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(WAIT_MS);
+      await page.screenshot({ path: `${OUT}/workflow-detail.png`, fullPage: false });
+      await page.screenshot({ path: `${OUT}/workflow-timeline-expanded.png`, fullPage: false });
     }
   } catch (e) {
     console.log('  workflow detail skipped:', e.message);
