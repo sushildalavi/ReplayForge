@@ -13,16 +13,6 @@ ReplayForge is built to debug and recover asynchronous workflow failures under c
 - Reclaims orphaned pending entries with janitor recovery loops
 - Exposes operational visibility via API + frontend dashboard
 
-## Frontend Screenshots
-
-![Dashboard](docs/screenshots/dashboard.png)
-![Dashboard Charts](docs/screenshots/dashboard-charts.png)
-![Workflow Detail](docs/screenshots/workflow-detail.png)
-![Workflow Timeline Expanded](docs/screenshots/workflow-timeline-expanded.png)
-![Dead Letters](docs/screenshots/dead-letters.png)
-![Workers](docs/screenshots/workers.png)
-![Command Palette](docs/screenshots/command-palette.png)
-
 ## Architecture
 
 ```mermaid
@@ -186,9 +176,9 @@ Avoid claiming exactly-once across Redis + Postgres.
 
 ## Docs Index
 
-- [Reliability notes](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/README.md)
-- [Load test runbook](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/load-test-runbook.md)
-- [Chaos runbook](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/chaos-runbook.md)
-- [Redis diagnostics](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/redis-diagnostics.md)
-- [SQL diagnostics](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/sql-diagnostics.md)
-- [Known gaps](/Users/sushildalavi/Desktop/Github/ReplayForge-Async-Workflow-Replay-Failure-Debugging-Platform/docs/reliability/known-gaps.md)
+- [Reliability notes](docs/reliability/README.md)
+- [Load test runbook](docs/reliability/load-test-runbook.md)
+- [Chaos runbook](docs/reliability/chaos-runbook.md)
+- [Redis diagnostics](docs/reliability/redis-diagnostics.md)
+- [SQL diagnostics](docs/reliability/sql-diagnostics.md)
+- [Known gaps](docs/reliability/known-gaps.md)
