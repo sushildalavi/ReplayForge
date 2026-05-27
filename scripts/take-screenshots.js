@@ -9,14 +9,41 @@ const BASE = 'http://localhost:5173';
 const API_BASE = 'http://localhost:8000';
 const WAIT_MS = 4000;
 
-async function waitForData(page, selector, timeout = 8000) {
-  try { await page.waitForSelector(selector, { timeout }); } catch {}
+async function seedWorkload(count = 40) {
+  const r = await fetch(`${API_BASE}/api/demo/generate-workload?count=${count}`, {
+    method: 'POST',
+  });
+  if (!r.ok) {
+    throw new Error(`failed to seed workload: ${r.status}`);
+  }
+}
+
+async function waitForNonEmptyData(timeoutMs = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const m = await fetch(`${API_BASE}/api/metrics`);
+      const w = await fetch(`${API_BASE}/api/workflows?limit=1`);
+      if (m.ok && w.ok) {
+        const metrics = await m.json();
+        const workflows = await w.json();
+        if ((metrics?.total_events || 0) > 0 && Array.isArray(workflows) && workflows.length > 0) {
+          return;
+        }
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  throw new Error('timeout waiting for non-empty metrics/workflows');
 }
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
+  console.log('🧪 seeding workload...');
+  await seedWorkload(50);
+  await waitForNonEmptyData();
 
   // ── 1. Dashboard
   console.log('📸 dashboard...');
@@ -69,8 +96,8 @@ async function waitForData(page, selector, timeout = 8000) {
       if (firstEvent) {
         await firstEvent.click();
         await page.waitForTimeout(600);
-        await page.screenshot({ path: `${OUT}/workflow-timeline-expanded.png`, fullPage: false });
       }
+      await page.screenshot({ path: `${OUT}/workflow-timeline-expanded.png`, fullPage: false });
     } else {
       // Fallback: capture workflows listing when no detail ID is available.
       await page.goto(`${BASE}/workflows`, { waitUntil: 'networkidle' });
