@@ -4,6 +4,7 @@ import os
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
@@ -11,10 +12,22 @@ from app.database import Base
 
 
 def _test_database_url() -> str:
+    explicit = os.getenv("TEST_DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+
     base = settings.database_url
     if base.endswith("/replayforge"):
         return base.rsplit("/", 1)[0] + "/replayforge_test"
     return base + "_test"
+
+def _admin_database_url() -> str:
+    explicit = os.getenv("TEST_ADMIN_DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+
+    url = make_url(settings.database_url)
+    return str(url.set(database="postgres"))
 
 
 @pytest.fixture(scope="session")
@@ -24,7 +37,7 @@ def test_db_url() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_test_db(test_db_url: str):
-    admin_url = settings.database_url
+    admin_url = _admin_database_url()
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     db_name = test_db_url.rsplit("/", 1)[1]
     with admin_engine.connect() as conn:

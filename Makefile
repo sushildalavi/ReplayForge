@@ -1,4 +1,4 @@
-.PHONY: up down chaos load check
+.PHONY: up down chaos load check test-backend test-frontend test-worker ci
 
 up:
 	docker compose up --build -d
@@ -14,3 +14,14 @@ load:
 
 check:
 	./scripts/check_state.sh
+
+test-backend:
+	cd api && pytest app/tests/ -v --ignore=app/tests/test_smoke_e2e.py
+
+test-frontend:
+	cd frontend && npm run typecheck && npm run build
+
+test-worker:
+	cd worker && go test ./... && go build ./...
+
+ci: test-backend test-frontend test-worker

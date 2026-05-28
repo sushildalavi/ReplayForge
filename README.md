@@ -124,6 +124,7 @@ make up
 make chaos
 make load
 make check
+make ci
 ```
 
 ## Reliability Diagnostics
@@ -160,9 +161,15 @@ GitHub Actions currently includes:
 
 - Backend tests
 - Frontend typecheck + build
+- Go worker build + tests
 - Docker build smoke checks
 
 If CI fails on backend paths, ensure workflows reference `api/` (not legacy `backend/`).
+
+For local backend test overrides:
+
+- `TEST_DATABASE_URL` to force the test DB connection string
+- `TEST_ADMIN_DATABASE_URL` to force the admin DB used to create/drop the test DB
 
 ## Known Reality (Interview-Safe Framing)
 

@@ -144,7 +144,10 @@ func main() {
 		eventUUID := normalizeUUID(fmt.Sprintf("%v", msg.Values["event_uuid"]))
 		pipelineID := normalizeUUID(fmt.Sprintf("%v", msg.Values["pipeline_id"]))
 		if eventUUID == "" || pipelineID == "" {
-			_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
+			if ackErr := app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err(); ackErr != nil {
+				log.Printf("ack failed for invalid message id=%s: %v", msg.ID, ackErr)
+				return false
+			}
 			return true
 		}
 
@@ -167,7 +170,10 @@ func main() {
 			return false
 		}
 
-		_ = app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err()
+		if ackErr := app.Redis.XAck(ctx, streamName, groupName, msg.ID).Err(); ackErr != nil {
+			log.Printf("ack failed id=%s event_uuid=%s: %v", msg.ID, eventUUID, ackErr)
+			return false
+		}
 		return true
 	}
 
