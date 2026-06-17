@@ -1,7 +1,5 @@
 # ReplayForge
 
-Async Workflow Replay and Failure Debugging Platform with a **Python/FastAPI control plane** and **Go data plane**.
-
 ## What ReplayForge Does
 
 ReplayForge is built to debug and recover asynchronous workflow failures under crash conditions.
