@@ -5,7 +5,7 @@
 # (Neon/RDS, Upstash/ElastiCache) and run only backend + worker containers.
 
 services:
-  backend:
+  control-plane:
     environment:
       - ENVIRONMENT=production
       - LOG_LEVEL=INFO
@@ -19,7 +19,7 @@ services:
         reservations:
           memory: 256M
 
-  worker:
+  go-worker:
     environment:
       - ENVIRONMENT=production
       - LOG_FORMAT=json
