@@ -32,6 +32,7 @@ Converge is a distributed workflow recovery system built around Redis Streams, P
 - Review `docs/RUNBOOK.md`
 - Review `docs/reliability/chaos-runbook.md`
 - Benchmark runner now emits pending artifacts in dry-run mode and measured artifacts when the local API is reachable
+- Prefer `python scripts/benchmark_replay.py --events 1000 --workers 2` and `python scripts/chaos_replay.py --events 1000 --workers 2 --kill-delay 2` for local verification
 
 ## Verified metrics only
 
@@ -54,6 +55,6 @@ Converge is a distributed workflow recovery system built around Redis Streams, P
 
 ## Verification Log
 
-- `python3 /Users/sushildalavi/Desktop/Github/converge/scripts/run_chaos_benchmark.py --events 10000 --workers 4 --pending` - pass - 2026-06-17 - Wrote pending JSON and Markdown artifacts under `benchmarks/`.
-- `python3 /Users/sushildalavi/Desktop/Github/converge/scripts/run_chaos_benchmark.py --pending --events 100 --workers 4 --output-dir /tmp/replayforge-bench --artifact-name replayforge_test` - pass - 2026-06-17 - Verified artifact writing in a custom output location.
-- Direct helper checks against `scripts/run_chaos_benchmark.py` - pass - 2026-06-17 - Verified pending and measured artifact shapes through direct assertions.
+- `python3 /Users/sushildalavi/Desktop/Github/converge/scripts/benchmark_replay.py --events 1000 --workers 2 --pending` - pass - 2026-07-01 - Wrote pending JSON and Markdown artifacts under `benchmarks/`.
+- `python3 /Users/sushildalavi/Desktop/Github/converge/scripts/chaos_replay.py --events 1000 --workers 2 --pending` - pass - 2026-07-01 - Verified chaos artifact writing in pending mode.
+- Direct helper checks against `scripts/benchmark_replay.py` - pass - 2026-07-01 - Verified pending and measured artifact shapes through direct assertions.

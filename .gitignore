@@ -48,3 +48,4 @@ yarn-error.log*
 # build artifacts
 build/
 out/
+benchmarks/

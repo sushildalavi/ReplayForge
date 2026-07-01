@@ -1,7 +1,6 @@
 # Converge
 
 Converge is a crash-safe event replay and workflow recovery engine.
-Crash-Safe Event Replay & Workflow Recovery Engine.
 
 ## What it does
 
@@ -12,6 +11,7 @@ Crash-Safe Event Replay & Workflow Recovery Engine.
 - Recovers stalled work with a janitor loop
 - Exposes the system through an API and dashboard
 - Publishes live backlog, retry, replay-latency, and worker health metrics
+- Verifies convergence with explicit replay and recovery reports
 
 ## Architecture
 
@@ -44,6 +44,15 @@ Local host ports:
 - Redis: `127.0.0.1:16379`
 - Frontend: `http://localhost:5173`
 
+## Correctness Model
+
+- Events are deduplicated with application-scoped idempotency keys.
+- Go workers claim PostgreSQL rows before processing Redis stream entries.
+- Database writes happen before Redis acknowledgements.
+- Pending-entry recovery reclaims stalled messages after worker interruption.
+- Retry handling moves poison messages to the DLQ after the configured limit.
+- `/api/convergence` reports whether the live stack has drained cleanly.
+
 ## Design notes
 
 - The recovery model is at-least-once with idempotent convergence, not exactly-once.
@@ -51,6 +60,7 @@ Local host ports:
 - The janitor reclaims stale pending entries and pending-entry recovery is built in.
 - The repo includes benchmark, chaos, and diagnostic tooling for failure scenarios.
 - `GET /health/backend` reports backend-specific status, and `GET /health/backend/stats` exposes stream and replay counters.
+- Redis 7.4 emits a `maintnotifications` handshake warning in the worker logs; it is noisy but harmless when `/health` and `/health/ready` are healthy.
 
 ## Optional ForgeLog Backend
 
@@ -74,6 +84,7 @@ python scripts/benchmark_forgelog.py --events 1000
 
 - Architecture and evaluation: [docs/PORTFOLIO_PROOF.md](docs/PORTFOLIO_PROOF.md)
 - Demo and local mode: `docker compose up --build -d`, `./scripts/check_state.sh`, `make chaos`
-- Benchmark runner: `python scripts/run_chaos_benchmark.py --events 10000 --workers 4` (use `--dry-run` or `--pending` to avoid contacting the API)
+- Chaos runner: `python scripts/chaos_replay.py --events 1000 --workers 2 --kill-delay 2`
+- Benchmark runner: `python scripts/benchmark_replay.py --events 1000 --workers 2` (use `--dry-run` or `--pending` to avoid contacting the API)
 - Test commands: backend pytest, worker `go test ./...`, frontend build if needed
 - Reliability proof: chaos and runbook docs under `docs/`

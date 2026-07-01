@@ -9,7 +9,7 @@ Quick reference for running Converge in development and production.
 ```bash
 docker compose up -d                          # everything (3 workers)
 docker compose ps
-docker compose logs -f worker                 # tail all worker replicas
+docker compose logs -f go-worker              # tail all worker replicas
 docker compose logs -f backend
 ```
 
@@ -21,13 +21,13 @@ The API listens on **http://127.0.0.1:18000** when started via compose.
 ## Scaling workers
 
 The worker service is **horizontally scalable** out of the box. Each replica
-auto-derives a unique name from its container hostname (`worker-<hostname>`),
+auto-derives a unique name from its container hostname (`go-<hostname>`),
 so they all join the same Redis Streams consumer group and split work.
 
 ### Set replica count
 ```bash
-# Edit docker-compose.yml → services.worker.deploy.replicas
-docker compose up -d --scale worker=5
+# Edit docker-compose.yml → services.go-worker.deploy.replicas
+docker compose up -d --scale go-worker=5
 ```
 
 ### Verify
@@ -46,12 +46,14 @@ You should see N rows, one per replica, all heartbeating.
 | `GET /health/live` | Liveness — orchestrator restart decision | Always 200 if process up |
 | `GET /health/ready` | Readiness — load balancer routing | 200 if Postgres + Redis reachable, else 503 with detail |
 | `GET /health` | Legacy alias for `/health/live` | 200 |
+| `GET /api/convergence` | Convergence verification snapshot | Reports pending, backlog, DLQ, duplicates, and orphaned claims |
 
 ### Example
 ```bash
 curl -s http://127.0.0.1:18000/health/ready | jq
 curl -s http://127.0.0.1:18000/health/backend | jq
 curl -s http://127.0.0.1:18000/health/backend/stats | jq
+curl -s http://127.0.0.1:18000/api/convergence | jq
 ```
 
 ```json
@@ -131,6 +133,15 @@ Pipe stdout via your container runtime to:
 - **Loki / Grafana** (Promtail)
 - **Cloud Logging / CloudWatch** (managed)
 
+### Redis 7.4 warning
+The worker logs may show a `maintnotifications` handshake warning from Redis 7.4. It is visible during startup and reconnects but does not block event processing. Verify the stack by checking:
+
+```bash
+curl -fsS http://127.0.0.1:18000/health
+curl -fsS http://127.0.0.1:18000/health/ready
+curl -fsS http://127.0.0.1:18000/api/convergence | jq
+```
+
 ---
 
 ## Common runbook entries
@@ -145,9 +156,9 @@ Restart the failing dep, or fail over to a replica.
 
 ### "Workers all crashed"
 ```bash
-docker compose ps worker
-docker compose logs worker --tail=50 | jq 'select(.level=="ERROR")'
-docker compose restart worker
+docker compose ps go-worker
+docker compose logs go-worker --tail=50 | jq 'select(.level=="ERROR")'
+docker compose restart go-worker
 ```
 Each worker auto-reclaims orphaned PEL entries via `XAUTOCLAIM` on startup,
 so up to 60s of in-flight work will be re-processed.
@@ -156,6 +167,7 @@ so up to 60s of in-flight work will be re-processed.
 ```bash
 curl -s http://127.0.0.1:18000/api/deadletters | jq 'length'
 curl -s http://127.0.0.1:18000/api/insights/errors | jq
+curl -s http://127.0.0.1:18000/api/convergence | jq '.convergence_issues'
 ```
 Investigate top error types. Replay one at a time:
 ```bash
@@ -167,8 +179,9 @@ curl -X POST http://127.0.0.1:18000/api/deadletters/$DLQ_ID/replay
 ```bash
 docker compose exec redis redis-cli XLEN events:incoming
 docker compose exec redis redis-cli XINFO GROUPS events:incoming
+curl -s http://127.0.0.1:18000/api/convergence | jq
 ```
-- Scale workers: `docker compose up -d --scale worker=N`
+- Scale workers: `docker compose up -d --scale go-worker=N`
 - Check workers are alive: `curl http://127.0.0.1:18000/api/workers`
 - Check `XAUTOCLAIM` isn't stuck on a poison message
 
@@ -197,6 +210,7 @@ docker compose exec redis redis-cli XINFO GROUPS events:incoming
 4. On retryable failure, the worker records the attempt, updates `retrying`, and schedules the next delivery in Redis.
 5. On poison or exhausted attempts, the worker writes a dead-letter record and emits a DLQ stream entry.
 6. The replay endpoint can move a dead-lettered event back into the live stream.
+7. `/api/convergence` confirms when there are no in-flight rows, no pending stream entries, and no orphaned worker claims.
 
 ## Reliability model
 

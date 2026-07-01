@@ -3,7 +3,7 @@
 ## Commands
 
 ```bash
-docker compose up -d --scale worker=3
+docker compose up -d --scale go-worker=3
 python3 scripts/load_test.py --events 200 --concurrency 20
 ```
 
