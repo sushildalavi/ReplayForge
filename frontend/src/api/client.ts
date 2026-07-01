@@ -1,6 +1,6 @@
 import axios from "axios";
 import type {
-  DeadLetterOut, EventOut, IncidentSummaryOut,
+  ConvergenceOut, DeadLetterOut, EventOut, IncidentSummaryOut,
   MetricsOut, WorkerOut, WorkflowSummaryOut, WorkflowTimelineOut,
 } from "../types";
 
@@ -30,6 +30,7 @@ export type RecentEvent = {
 
 export const api = {
   getMetrics: () => http.get<MetricsOut>("/api/metrics").then(r => r.data),
+  getConvergence: () => http.get<ConvergenceOut>("/api/convergence").then(r => r.data),
   listWorkflows: (limit = 50) => http.get<WorkflowSummaryOut[]>("/api/workflows", { params: { limit } }).then(r => r.data),
   getWorkflowTimeline: (id: string) => http.get<WorkflowTimelineOut>(`/api/workflows/${id}/timeline`).then(r => r.data),
   listDeadLetters: (limit = 100) => http.get<DeadLetterOut[]>("/api/deadletters", { params: { limit } }).then(r => r.data),

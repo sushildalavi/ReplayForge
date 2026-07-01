@@ -52,6 +52,8 @@ export default function Dashboard() {
   const tLoad  = useCallback(()=>api.eventTypeStats(),[]);
 
   const { data:m, refresh:refM } = usePolling(mLoad,4000);
+  const cLoad  = useCallback(()=>api.getConvergence(),[]);
+  const { data:c, refresh:refC } = usePolling(cLoad,4000);
   const { data:wf, refresh:refWf } = usePolling(wLoad,5000);
   const { data:svc } = usePolling(sLoad,8000);
   const { data:errs } = usePolling(eLoad,10000);
@@ -113,11 +115,12 @@ export default function Dashboard() {
                 {" · p50 "}<span style={{color:"var(--muted)"}}>{fmtMs(m.p50_attempt_duration_ms)}</span>
                 {" · p95 "}<span style={{color:"var(--muted)"}}>{fmtMs(m.p95_attempt_duration_ms)}</span>
                 {tp!=null && <> · <span style={{color:"var(--accent)"}}>{tp}/min</span></>}
+                {c && <> · <span style={{color:c.converged?"var(--green)":"var(--orange)"}}>{c.convergence_state}</span></>}
               </p>
             )}
           </div>
           <div style={{display:"flex",gap:6}}>
-            <motion.button className="btn-outline" onClick={()=>{refM();refWf()}} whileTap={{scale:.93}}>
+            <motion.button className="btn-outline" onClick={()=>{refM();refC();refWf()}} whileTap={{scale:.93}}>
               <RefreshCw size={11}/>
             </motion.button>
             <motion.button className="btn-amber" onClick={generate} disabled={gen} whileTap={{scale:.93}}>
@@ -176,6 +179,41 @@ export default function Dashboard() {
             </p>
           </div>
         ))}
+      </div>
+
+      <div className="card" style={{ overflow:"hidden" }}>
+        <div style={{ padding:"10px 14px", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <p style={{ fontSize:12, fontWeight:600, color:"var(--text)" }}>Convergence Check</p>
+            <p style={{ fontSize:10, color:"var(--dim)", marginTop:2 }}>Backend and Redis-backed recovery state</p>
+          </div>
+          <span className="mono" style={{ fontSize:10, color:c?.converged ? "var(--green)" : "var(--orange)" }}>
+            {c?.verified_at ? ago(c.verified_at) : "waiting"}
+          </span>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(6, 1fr)", gap:0 }}>
+          {[
+            { label:"State", value:c?.convergence_state ?? null, color:c?.converged ? "var(--green)" : "var(--orange)", mono:false },
+            { label:"Pending", value:c?.pending_events ?? null, color:"var(--orange)", mono:true },
+            { label:"Backlog", value:c?.stream_backlog ?? null, color:"var(--muted)", mono:true },
+            { label:"Orphans", value:c?.orphaned_records ?? null, color:c?.orphaned_records ? "var(--red)" : "var(--muted)", mono:true },
+            { label:"Dup sidefx", value:c?.duplicate_side_effects ?? null, color:c?.duplicate_side_effects ? "var(--red)" : "var(--muted)", mono:true },
+            { label:"Recent fails", value:c?.recent_failures ?? null, color:"var(--dim)", mono:true },
+          ].map((s,i,arr)=>(
+            <div key={s.label} style={{ padding:"10px 12px", borderRight: i<arr.length-1 ? "1px solid var(--border)" : "none" }}>
+              <p style={{ fontSize:9.5, fontWeight:600, color:"var(--dim)", textTransform:"uppercase", letterSpacing:".07em", marginBottom:4 }}>{s.label}</p>
+              <p className={s.mono?"mono":""} style={{ fontSize:16, fontWeight:700, color:s.color, letterSpacing:"-.02em", lineHeight:1 }}>
+                {s.value===null ? <Skeleton className="w-10 h-4"/> : typeof s.value==="number" ? <AnimatedNumber value={s.value}/> : s.value}
+              </p>
+            </div>
+          ))}
+        </div>
+        {c && c.convergence_issues.length > 0 && (
+          <div style={{ padding:"0 14px 12px", fontSize:11, color:"var(--dim)" }}>
+            <span style={{ fontWeight:600, color:"var(--text)" }}>Open issues:</span>{" "}
+            {c.convergence_issues.join(" · ")}
+          </div>
+        )}
       </div>
 
       {/* ROW: rate chart (full width) */}

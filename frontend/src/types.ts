@@ -115,6 +115,46 @@ export interface MetricsOut {
   avg_attempt_duration_ms: number | null;
   p50_attempt_duration_ms: number | null;
   p95_attempt_duration_ms: number | null;
+  acknowledged_events: number;
+  pending_events: number;
+  stream_backlog: number;
+  retrying_events: number;
+  dlq_events: number;
+  orphaned_records: number;
+  duplicate_deliveries: number;
+  duplicate_side_effects: number;
+  recent_failures: number;
+  convergence_state: string;
+  converged: boolean;
+  worker_heartbeat_age_seconds: number | null;
+}
+
+export interface ConvergenceOut {
+  total_events: number;
+  processed_events: number;
+  acknowledged_events: number;
+  received_events: number;
+  queued_events: number;
+  processing_events: number;
+  retrying_events: number;
+  dead_lettered_events: number;
+  pending_events: number;
+  retry_queue_depth: number;
+  retry_stream_depth: number;
+  incoming_stream_depth: number;
+  stream_backlog: number;
+  dlq_events: number;
+  orphaned_records: number;
+  duplicate_deliveries: number;
+  duplicate_side_effects: number;
+  recent_failures: number;
+  active_workers: number;
+  stale_workers: number;
+  worker_heartbeat_age_seconds: number | null;
+  convergence_state: string;
+  converged: boolean;
+  convergence_issues: string[];
+  verified_at: string;
 }
 
 export interface IncidentSummaryOut {
