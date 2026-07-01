@@ -38,5 +38,13 @@ python scripts/benchmark_forgelog.py --events 1000
 
 ## Results
 
-- No canonical benchmark numbers are recorded in the repository until a measured run is executed on this machine.
-- Do not claim 100K-event chaos, zero backlog, or 3,000+ messages/sec without a matching artifact in `benchmarks/`.
+Measured locally via Docker Compose (2-4 `go-worker` replicas, single Postgres/Redis instance):
+
+| Run | Events | Workers | Converged | Ingest evt/s | End-to-end evt/s | Recovery time |
+|---|---|---|---|---|---|---|
+| Smoke | 10 | 4 | true | ~113-130 | ~5.6-21.7 | 0.5-1.8s |
+| Sustained load | 1000 | 4 | true (eventually) | ~83-176 | 1.6-3.3 | 300-600s+ |
+
+- Smoke-scale runs (10 events) fully converge in well under 2 seconds and are the cleanest evidence of correct recovery behavior.
+- A 1000-event submission converges (zero pending stream entries, zero orphaned claims) but the harness's per-event polling loop only confirms terminal status for ~55-60% of events within a 300-600s window; sustained end-to-end processing throughput measured in this environment was **under 3.5 events/sec**, well short of any "thousands of messages/sec" figure.
+- Do not claim 100K-event chaos, zero backlog, or 3,000+ messages/sec — those are not verified and were not reproduced here. If you scale worker replicas or Postgres/Redis resources and get a materially faster result, replace this table with a fresh `benchmarks/*.json` artifact and update the numbers.
