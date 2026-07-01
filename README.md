@@ -10,6 +10,7 @@ ReplayForge is a crash-recovery platform for asynchronous workflows.
 - Persists idempotent state in PostgreSQL
 - Recovers stalled work with a janitor loop
 - Exposes the system through an API and dashboard
+- Publishes live backlog, retry, replay-latency, and worker health metrics
 
 ## Architecture
 
@@ -35,11 +36,20 @@ docker compose ps
 make chaos
 ```
 
+Local host ports:
+
+- API: `http://127.0.0.1:18000`
+- PostgreSQL: `127.0.0.1:15432`
+- Redis: `127.0.0.1:16379`
+- Frontend: `http://localhost:5173`
+
 ## Design notes
 
-- The recovery model is at-least-once with idempotent convergence.
-- The janitor reclaims stale pending entries.
-- The repo includes benchmark and diagnostic tooling for failure scenarios.
+- The recovery model is at-least-once with idempotent convergence, not exactly-once.
+- The worker claims rows in PostgreSQL before acking Redis stream entries.
+- The janitor reclaims stale pending entries and pending-entry recovery is built in.
+- The repo includes benchmark, chaos, and diagnostic tooling for failure scenarios.
+- `GET /health/backend` reports backend-specific status, and `GET /health/backend/stats` exposes stream and replay counters.
 
 ## Optional ForgeLog Backend
 

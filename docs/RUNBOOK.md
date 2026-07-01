@@ -14,6 +14,7 @@ docker compose logs -f backend
 ```
 
 Open **http://localhost:5173** for the dashboard.
+The API listens on **http://127.0.0.1:18000** when started via compose.
 
 ---
 
@@ -31,7 +32,7 @@ docker compose up -d --scale worker=5
 
 ### Verify
 ```bash
-curl -s http://localhost:8000/api/workers | jq '.[] | {name: .worker_name, status, hb: .last_heartbeat_at}'
+curl -s http://127.0.0.1:18000/api/workers | jq '.[] | {name: .worker_name, status, hb: .last_heartbeat_at}'
 ```
 
 You should see N rows, one per replica, all heartbeating.
@@ -48,7 +49,9 @@ You should see N rows, one per replica, all heartbeating.
 
 ### Example
 ```bash
-curl -s localhost:8000/health/ready | jq
+curl -s http://127.0.0.1:18000/health/ready | jq
+curl -s http://127.0.0.1:18000/health/backend | jq
+curl -s http://127.0.0.1:18000/health/backend/stats | jq
 ```
 
 ```json
@@ -151,13 +154,13 @@ so up to 60s of in-flight work will be re-processed.
 
 ### "Dead letter queue growing"
 ```bash
-curl -s localhost:8000/api/deadletters | jq 'length'
-curl -s localhost:8000/api/insights/errors | jq
+curl -s http://127.0.0.1:18000/api/deadletters | jq 'length'
+curl -s http://127.0.0.1:18000/api/insights/errors | jq
 ```
 Investigate top error types. Replay one at a time:
 ```bash
-DLQ_ID=$(curl -s localhost:8000/api/deadletters | jq -r '.[0].id')
-curl -X POST localhost:8000/api/deadletters/$DLQ_ID/replay
+DLQ_ID=$(curl -s http://127.0.0.1:18000/api/deadletters | jq -r '.[0].id')
+curl -X POST http://127.0.0.1:18000/api/deadletters/$DLQ_ID/replay
 ```
 
 ### "Stream backlog growing (events queued not draining)"
@@ -166,7 +169,7 @@ docker compose exec redis redis-cli XLEN events:incoming
 docker compose exec redis redis-cli XINFO GROUPS events:incoming
 ```
 - Scale workers: `docker compose up -d --scale worker=N`
-- Check workers are alive: `curl localhost:8000/api/workers`
+- Check workers are alive: `curl http://127.0.0.1:18000/api/workers`
 - Check `XAUTOCLAIM` isn't stuck on a poison message
 
 ---
@@ -185,3 +188,19 @@ docker compose exec redis redis-cli XINFO GROUPS events:incoming
 | `DB_POOL_RECYCLE` | 300 | Connection recycle (Neon-friendly) |
 | `LOG_FORMAT` | json | `json` or `text` |
 | `ENVIRONMENT` | development | `production` disables `/docs` |
+
+## Event lifecycle
+
+1. API persists the event and publishes it to `events:incoming`.
+2. Go workers claim the event row in PostgreSQL before acknowledging the stream entry.
+3. On success, the event is marked `succeeded` and replay latency is captured.
+4. On retryable failure, the worker records the attempt, updates `retrying`, and schedules the next delivery in Redis.
+5. On poison or exhausted attempts, the worker writes a dead-letter record and emits a DLQ stream entry.
+6. The replay endpoint can move a dead-lettered event back into the live stream.
+
+## Reliability model
+
+- Delivery is at-least-once.
+- Correctness comes from idempotent state transitions and claim locking.
+- Redis pending-entry recovery handles worker crashes and disconnects.
+- Database writes happen before stream acknowledgements.
