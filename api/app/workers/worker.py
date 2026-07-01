@@ -96,10 +96,10 @@ def _handle_failure(db: Session, event: Event, worker: Worker, attempt_num: int,
     ))
 
     if should_dead_letter(event.attempt_count, event.max_attempts):
-        db.add(DeadLetter(event_id=event.id, reason="max attempts exceeded", last_error=error_msg))
+        db.add(DeadLetter(event_id=event.id, reason="max_attempts_exceeded", last_error=error_msg))
         event.status = "dead_lettered"
         db.commit()
-        publish_deadletter(str(event.id), "max attempts exceeded")
+        publish_deadletter(str(event.id), "max_attempts_exceeded")
         log.warning("event dead-lettered", extra={"event_id": str(event.id), "attempts": event.attempt_count})
     else:
         delay = next_retry_delay(event.attempt_count, jitter=True) or 0

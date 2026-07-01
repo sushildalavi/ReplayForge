@@ -401,9 +401,9 @@ func finalizeFailure(ctx context.Context, db *pgxpool.Pool, rdb *redis.Client, r
 
 	if nextAttemptCount >= record.MaxAttempts {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO dead_letters (id, event_id, reason, last_error, created_at, replayed_at, replay_status)
-			VALUES ($1::uuid, $2::uuid, $3, $4, CURRENT_TIMESTAMP, NULL, NULL)
-		`, newUUID(), record.ID, "max attempts exceeded", errorMessage)
+		INSERT INTO dead_letters (id, event_id, reason, last_error, created_at, replayed_at, replay_status)
+		VALUES ($1::uuid, $2::uuid, $3, $4, CURRENT_TIMESTAMP, NULL, NULL)
+	`, newUUID(), record.ID, "max_attempts_exceeded", errorMessage)
 		if err != nil {
 			return err
 		}
@@ -422,7 +422,7 @@ func finalizeFailure(ctx context.Context, db *pgxpool.Pool, rdb *redis.Client, r
 		if err := tx.Commit(ctx); err != nil {
 			return err
 		}
-		if err := publishDeadLetter(ctx, rdb, record.ID, "max attempts exceeded"); err != nil {
+		if err := publishDeadLetter(ctx, rdb, record.ID, "max_attempts_exceeded"); err != nil {
 			log.Printf("failed to publish dead letter for %s: %v", record.ID, err)
 		}
 		return nil

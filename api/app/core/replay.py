@@ -52,7 +52,10 @@ def replay_dead_letter(db: Session, dead_letter_id: UUID) -> Event:
     try:
         publish_incoming(str(event.id))
     except Exception:
+        dl.replay_status = "publish_failed"
+        db.commit()
         log.exception("failed to publish replay for event %s", event.id)
+        raise
 
     log.info("replayed dead letter %s → event %s", dl.id, event.id)
     return event

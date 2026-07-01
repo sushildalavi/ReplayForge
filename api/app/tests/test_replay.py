@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
+
 from app.core.retry_policy import should_dead_letter
 from app.models import Application, DeadLetter, Event, EventAttempt
 
@@ -75,3 +77,21 @@ def test_replay_requeues_deadletter_event(db):
     new_attempts = db.query(EventAttempt).filter_by(event_id=ev.id).all()
     assert len(new_attempts) == 1
     assert new_attempts[0].metadata_json.get("replay_of_dead_letter_id") == str(dl.id)
+
+
+def test_replay_marks_publish_failed_when_stream_publish_fails(db):
+    ev = _make_event(db, status="dead_lettered", attempt_count=4)
+    dl = DeadLetter(event_id=ev.id, reason="max_attempts_exceeded", last_error="boom")
+    db.add(dl)
+    db.commit()
+    db.refresh(dl)
+
+    with patch("app.core.replay.publish_incoming", side_effect=RuntimeError("redis down")):
+        from app.core.replay import replay_dead_letter
+
+        with pytest.raises(RuntimeError):
+            replay_dead_letter(db, dl.id)
+
+    db.refresh(dl)
+    assert dl.replay_status == "publish_failed"
+    assert dl.replayed_at is not None
