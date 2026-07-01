@@ -27,7 +27,7 @@ def _admin_database_url() -> str:
         return explicit
 
     url = make_url(settings.database_url)
-    return str(url.set(database="postgres"))
+    return url.set(database="postgres").render_as_string(hide_password=False)
 
 
 @pytest.fixture(scope="session")
