@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.convergence import build_convergence_report
 from app.core.redis_streams import GROUP, RETRY_ZSET, STREAM_INCOMING, STREAM_RETRY, get_redis
 from app.database import get_db
-from app.models import DeadLetter, EventAttempt, Worker
+from app.models import DeadLetter, EventAttempt
 from app.models import Event
 from app.schemas import MetricsOut
 
@@ -20,6 +21,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 @router.get("/api/metrics")
 def get_metrics(db: DbDep) -> MetricsOut:
+    convergence = build_convergence_report(db)
     status_rows = db.execute(
         select(Event.status, func.count(Event.id)).group_by(Event.status)
     ).all()
@@ -62,15 +64,6 @@ def get_metrics(db: DbDep) -> MetricsOut:
     replay_latency_ms = None
     if replay_latencies:
         replay_latency_ms = round(sum(float(v) for v in replay_latencies) / len(replay_latencies), 1)
-
-    # worker counts
-    now = datetime.now(timezone.utc)
-    workers = db.query(Worker).all()
-    active_workers = sum(1 for w in workers if w.status in ("active", "busy"))
-    stale_workers = sum(
-        1 for w in workers
-        if (now - (w.last_heartbeat_at.replace(tzinfo=timezone.utc) if w.last_heartbeat_at.tzinfo is None else w.last_heartbeat_at)).total_seconds() > 30
-    )
 
     # Redis stream/backlog state
     r = get_redis()
@@ -124,8 +117,20 @@ def get_metrics(db: DbDep) -> MetricsOut:
         processing=processing,
         replay_requeued=replayed_count,
         replay_success_rate=round(replay_success_rate, 3),
-        active_workers=active_workers,
-        stale_workers=stale_workers,
+        active_workers=convergence.active_workers,
+        stale_workers=convergence.stale_workers,
+        acknowledged_events=convergence.acknowledged_events,
+        pending_events=convergence.pending_events,
+        stream_backlog=convergence.stream_backlog,
+        retrying_events=convergence.retrying_events,
+        dlq_events=convergence.dlq_events,
+        orphaned_records=convergence.orphaned_records,
+        duplicate_deliveries=convergence.duplicate_deliveries,
+        duplicate_side_effects=convergence.duplicate_side_effects,
+        recent_failures=convergence.recent_failures,
+        convergence_state=convergence.convergence_state,
+        converged=convergence.converged,
+        worker_heartbeat_age_seconds=convergence.worker_heartbeat_age_seconds,
         processed_per_sec=processed_per_sec,
         retry_queue_depth=retry_queue_depth,
         incoming_stream_depth=incoming_stream_depth,

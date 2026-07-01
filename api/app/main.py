@@ -124,7 +124,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 # ── routers ────────────────────────────────────────────────
 from app.api import (  # noqa: E402
     events, workflows, workers,
-    metrics, deadletters, incidents,
+    convergence, metrics, deadletters, incidents,
     insights, health, ai,
 )
 app.include_router(health.router)
@@ -132,6 +132,7 @@ app.include_router(events.router)
 app.include_router(events.demo_router)
 app.include_router(workflows.router)
 app.include_router(workers.router)
+app.include_router(convergence.router)
 app.include_router(metrics.router)
 app.include_router(deadletters.router)
 app.include_router(incidents.router)

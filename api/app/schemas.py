@@ -123,6 +123,18 @@ class MetricsOut(BaseModel):
     replay_success_rate: float
     active_workers: int
     stale_workers: int
+    acknowledged_events: int = 0
+    pending_events: int = 0
+    stream_backlog: int = 0
+    retrying_events: int = 0
+    dlq_events: int = 0
+    orphaned_records: int = 0
+    duplicate_deliveries: int = 0
+    duplicate_side_effects: int = 0
+    recent_failures: int = 0
+    convergence_state: str = "unknown"
+    converged: bool = False
+    worker_heartbeat_age_seconds: float | None = None
     processed_per_sec: float | None = None
     retry_queue_depth: int = 0
     incoming_stream_depth: int = 0
@@ -134,6 +146,34 @@ class MetricsOut(BaseModel):
     avg_attempt_duration_ms: float | None = None
     p50_attempt_duration_ms: float | None = None
     p95_attempt_duration_ms: float | None = None
+
+
+class ConvergenceOut(BaseModel):
+    total_events: int
+    processed_events: int
+    acknowledged_events: int
+    received_events: int
+    queued_events: int
+    processing_events: int
+    retrying_events: int
+    dead_lettered_events: int
+    pending_events: int
+    retry_queue_depth: int
+    retry_stream_depth: int
+    incoming_stream_depth: int
+    stream_backlog: int
+    dlq_events: int
+    orphaned_records: int
+    duplicate_deliveries: int
+    duplicate_side_effects: int
+    recent_failures: int
+    active_workers: int
+    stale_workers: int
+    worker_heartbeat_age_seconds: float | None = None
+    convergence_state: str
+    converged: bool
+    convergence_issues: list[str] = Field(default_factory=list)
+    verified_at: datetime
 
 
 class IncidentSummaryOut(BaseModel):
