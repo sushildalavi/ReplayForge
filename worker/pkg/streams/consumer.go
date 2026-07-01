@@ -17,7 +17,7 @@ func NewTaskChannel() chan redis.XMessage {
 }
 
 func EnsureConsumerGroup(ctx context.Context, rdb *redis.Client, streamName, groupName string) error {
-	err := rdb.XGroupCreateMkStream(ctx, streamName, groupName, "$").Err()
+	err := rdb.XGroupCreateMkStream(ctx, streamName, groupName, "0").Err()
 	if err == nil {
 		return nil
 	}
